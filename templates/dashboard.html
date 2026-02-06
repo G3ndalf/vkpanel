@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1>📊 Дашборд</h1>
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <span id="last-update" style="color: #64748b; font-size: 0.9rem;" data-time="{{ last_update or '' }}">
+            {% if last_update %}
+            Обновлено: ...
+            {% else %}
+            Ещё не обновлялось
+            {% endif %}
+        </span>
+        <button id="refresh-btn" class="btn btn-primary" onclick="refreshStatus()">
+            🔄 Обновить
+        </button>
+    </div>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">Всего скриптов</div>
+        <div class="value">{{ total_scripts }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Работают</div>
+        <div class="value" style="color: #10b981;" id="running-count">{{ running_scripts }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Остановлено</div>
+        <div class="value" style="color: #ef4444;" id="stopped-count">{{ total_scripts - running_scripts }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Серверов</div>
+        <div class="value">{{ servers|length }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>🖥 Все скрипты</h2>
+    
+    {% if scripts_info %}
+    <table>
+        <thead>
+            <tr>
+                <th>Сервер</th>
+                <th>Скрипт</th>
+                <th>Аккаунт / Проект</th>
+                <th>Статус</th>
+                <th>Циклов</th>
+                <th>Успехов</th>
+                <th>Последний IP</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody id="scripts-table">
+            {% for item in scripts_info %}
+            <tr id="row-{{ item.server_id }}-{{ item.script.id }}">
+                <td>{{ item.server }}</td>
+                <td>{{ item.script.name }}</td>
+                <td class="account-cell" style="font-size: 0.8rem; color: #94a3b8; line-height: 1.3;">
+                    <div>{{ item.status.account or '-' }}</div>
+                    <div style="color: #64748b;">{{ item.status.project or '-' }}</div>
+                </td>
+                <td class="status-cell">
+                    {% if item.status.error %}
+                    <span class="badge badge-yellow" style="cursor:help;" title="{{ item.status.error }}">⚠️ {{ item.status.error[:30] }}...</span>
+                    {% elif item.status.running %}
+                    <span class="badge badge-green">Работает</span>
+                    {% elif item.status %}
+                    <span class="badge badge-red">Остановлен</span>
+                    {% else %}
+                    <span class="badge" style="background: rgba(100,116,139,0.2); color: #64748b;">Нет данных</span>
+                    {% endif %}
+                </td>
+                <td class="cycles-cell">{{ item.status.cycles or '-' }}</td>
+                <td class="success-cell">{{ item.status.success or '-' }}</td>
+                <td class="ip-cell">
+                    {% if item.status.last_ip %}
+                    <code class="ip-code">{{ item.status.last_ip }}</code>
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td class="actions-cell">
+                    <div class="actions">
+                        {% if item.status.running %}
+                        <form method="POST" action="/servers/{{ item.server_id }}/scripts/{{ item.script.id }}/stop" style="display:inline;">
+                            <button type="submit" class="btn btn-secondary btn-sm">Стоп</button>
+                        </form>
+                        <form method="POST" action="/servers/{{ item.server_id }}/scripts/{{ item.script.id }}/restart" style="display:inline;">
+                            <button type="submit" class="btn btn-secondary btn-sm">Рестарт</button>
+                        </form>
+                        {% else %}
+                        <form method="POST" action="/servers/{{ item.server_id }}/scripts/{{ item.script.id }}/start" style="display:inline;">
+                            <button type="submit" class="btn btn-primary btn-sm">Старт</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+        <p>Скриптов пока нет</p>
+        <a href="/servers" class="btn btn-primary" style="margin-top: 1rem;">Добавить сервер</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function timeAgo(dateStr) {
+    if (!dateStr) return 'Ещё не обновлялось';
+    
+    const date = new Date(dateStr.replace(' ', 'T') + 'Z');
+    const now = new Date();
+    const seconds = Math.floor((now - date) / 1000);
+    
+    if (seconds < 60) return 'только что';
+    if (seconds < 120) return '1 мин назад';
+    if (seconds < 3600) return Math.floor(seconds / 60) + ' мин назад';
+    if (seconds < 7200) return '1 час назад';
+    if (seconds < 86400) return Math.floor(seconds / 3600) + ' ч назад';
+    if (seconds < 172800) return '1 день назад';
+    return Math.floor(seconds / 86400) + ' дн назад';
+}
+
+function updateTimeAgo() {
+    const el = document.getElementById('last-update');
+    const time = el.dataset.time;
+    if (time) {
+        el.textContent = 'Обновлено: ' + timeAgo(time);
+    }
+}
+
+// Обновляем время при загрузке и каждую минуту
+updateTimeAgo();
+setInterval(updateTimeAgo, 60000);
+
+async function refreshStatus() {
+    const btn = document.getElementById('refresh-btn');
+    const lastUpdate = document.getElementById('last-update');
+    
+    btn.disabled = true;
+    btn.textContent = '⏳ Обновление...';
+    lastUpdate.textContent = 'Обновление...';
+    
+    try {
+        const res = await fetch('/api/refresh', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.ok) {
+            lastUpdate.dataset.time = data.last_update;
+            updateTimeAgo();
+            // Перезагружаем страницу чтобы показать новые данные
+            location.reload();
+        } else {
+            lastUpdate.textContent = 'Ошибка обновления';
+        }
+    } catch (e) {
+        lastUpdate.textContent = 'Ошибка: ' + e.message;
+    }
+    
+    btn.disabled = false;
+    btn.textContent = '🔄 Обновить';
+}
+</script>
+{% endblock %}

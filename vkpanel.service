@@ -1,0 +1,18 @@
+[Unit]
+Description=VK IP Panel
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vkpanel
+Environment="PATH=/opt/vkpanel/venv/bin:/usr/bin"
+Environment="ADMIN_USER=admin"
+Environment="ADMIN_PASS=Haxoastemir29"
+Environment="DATA_FILE=/opt/vkpanel/data.json"
+ExecStart=/opt/vkpanel/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

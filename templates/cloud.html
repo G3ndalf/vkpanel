@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}VK Cloud IP — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1>☁️ Floating IP из VK Cloud</h1>
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <span id="last-update" style="color: #64748b; font-size: 0.9rem;" data-time="{{ last_update or '' }}">
+            {% if last_update %}
+            Обновлено: ...
+            {% else %}
+            Ещё не обновлялось
+            {% endif %}
+        </span>
+        <button id="refresh-btn" class="btn btn-primary" onclick="refreshCloud()">
+            🔄 Обновить
+        </button>
+    </div>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">Всего IP</div>
+        <div class="value">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Привязано к VM</div>
+        <div class="value" style="color: #10b981;">{{ stats.attached }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Свободно</div>
+        <div class="value" style="color: #f59e0b;">{{ stats.free }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>📋 Все Floating IP ({{ all_ips|length }})</h2>
+    
+    {% if all_ips %}
+    <table>
+        <thead>
+            <tr>
+                <th>IP адрес</th>
+                <th>Аккаунт</th>
+                <th>Проект</th>
+                <th>Статус</th>
+                <th>Fixed IP</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ip in all_ips %}
+            <tr>
+                <td><code class="ip-code" style="color: #f59e0b; font-size: 1rem;">{{ ip.ip }}</code></td>
+                <td style="font-size: 0.85rem;">{{ ip.account or '-' }}</td>
+                <td style="font-size: 0.85rem; color: #94a3b8;">{{ ip.project or '-' }}</td>
+                <td>
+                    {% if ip.attached %}
+                    <span class="badge badge-green">Привязан к VM</span>
+                    {% else %}
+                    <span class="badge badge-yellow">Свободен</span>
+                    {% endif %}
+                </td>
+                <td style="font-size: 0.85rem; color: #64748b;">{{ ip.fixed_ip or '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+        <p>Нет данных</p>
+        <p style="margin-top: 0.5rem; font-size: 0.9rem;">Нажмите "Обновить" чтобы загрузить данные из VK Cloud</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function timeAgo(dateStr) {
+    if (!dateStr) return 'Ещё не обновлялось';
+    
+    const date = new Date(dateStr.replace(' ', 'T') + 'Z');
+    const now = new Date();
+    const seconds = Math.floor((now - date) / 1000);
+    
+    if (seconds < 60) return 'только что';
+    if (seconds < 120) return '1 мин назад';
+    if (seconds < 3600) return Math.floor(seconds / 60) + ' мин назад';
+    if (seconds < 7200) return '1 час назад';
+    if (seconds < 86400) return Math.floor(seconds / 3600) + ' ч назад';
+    if (seconds < 172800) return '1 день назад';
+    return Math.floor(seconds / 86400) + ' дн назад';
+}
+
+function updateTimeAgo() {
+    const el = document.getElementById('last-update');
+    const time = el.dataset.time;
+    if (time) {
+        el.textContent = 'Обновлено: ' + timeAgo(time);
+    }
+}
+
+updateTimeAgo();
+setInterval(updateTimeAgo, 60000);
+
+async function refreshCloud() {
+    const btn = document.getElementById('refresh-btn');
+    const lastUpdate = document.getElementById('last-update');
+    
+    btn.disabled = true;
+    btn.textContent = '⏳ Загрузка...';
+    lastUpdate.textContent = 'Загрузка данных из VK Cloud...';
+    
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 минут таймаут
+        
+        const res = await fetch('/api/cloud/refresh', { 
+            method: 'POST',
+            signal: controller.signal 
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        
+        if (data.ok) {
+            lastUpdate.dataset.time = data.last_update;
+            updateTimeAgo();
+            location.reload();
+        } else {
+            lastUpdate.textContent = 'Ошибка обновления';
+        }
+    } catch (e) {
+        lastUpdate.textContent = 'Ошибка: ' + e.message;
+    }
+    
+    btn.disabled = false;
+    btn.textContent = '🔄 Обновить';
+}
+</script>
+{% endblock %}

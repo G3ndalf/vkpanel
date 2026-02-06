@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Вход — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="max-width: 400px; margin: 100px auto;">
+    <div class="card">
+        <h2 style="text-align: center; margin-bottom: 1.5rem;">🔐 Вход в панель</h2>
+        
+        {% if error %}
+        <div class="flash flash-error">
+            Неверный логин или пароль
+        </div>
+        {% endif %}
+        
+        <form method="POST" action="/login">
+            <div class="form-group">
+                <label>Логин</label>
+                <input type="text" name="username" required autofocus>
+            </div>
+            
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" name="password" required>
+            </div>
+            
+            <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+                Войти
+            </button>
+        </form>
+    </div>
+</div>
+{% endblock %}

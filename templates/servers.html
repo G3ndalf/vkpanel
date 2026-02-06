@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Серверы — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1>🖥 Серверы</h1>
+</div>
+
+<!-- Форма добавления сервера -->
+<div class="card">
+    <h2>➕ Добавить сервер</h2>
+    <form method="POST" action="/servers/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Название</label>
+                <input type="text" name="name" placeholder="Например: vps-1" required>
+            </div>
+            <div class="form-group">
+                <label>Хост (IP)</label>
+                <input type="text" name="host" placeholder="192.168.1.1" required>
+            </div>
+            <div class="form-group">
+                <label>Порт SSH</label>
+                <input type="number" name="port" value="22">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Пользователь</label>
+                <input type="text" name="user" placeholder="root" required>
+            </div>
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" name="password" placeholder="Пароль SSH">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Добавить сервер</button>
+    </form>
+</div>
+
+<!-- Список серверов -->
+<div class="card">
+    <h2>📋 Список серверов</h2>
+    
+    {% if servers %}
+    <table>
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Хост</th>
+                <th>Порт</th>
+                <th>Пользователь</th>
+                <th>Скриптов</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for server in servers %}
+            <tr>
+                <td><strong>{{ server.name }}</strong></td>
+                <td><code class="ip-code">{{ server.host }}</code></td>
+                <td>{{ server.port }}</td>
+                <td>{{ server.user }}</td>
+                <td>{{ server.scripts|length if server.scripts else 0 }}</td>
+                <td>
+                    <div class="actions">
+                        <a href="/servers/{{ server.id }}/scripts" class="btn btn-primary btn-sm">Скрипты</a>
+                        <form method="POST" action="/servers/{{ server.id }}/delete" style="display:inline;" onsubmit="return confirm('Удалить сервер {{ server.name }}?');">
+                            <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+        <p>Серверов пока нет. Добавьте первый сервер выше.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

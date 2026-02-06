@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block title %}Проекты — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1>📁 Проекты VK Cloud</h1>
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <span id="last-update" style="color: #64748b; font-size: 0.9rem;">
+            {% if last_update %}
+            Обновлено: {{ last_update }}
+            {% else %}
+            Ещё не обновлялось
+            {% endif %}
+        </span>
+        <button id="refresh-btn" class="btn btn-primary" onclick="refreshProjects()">
+            🔄 Обновить всё
+        </button>
+    </div>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">Аккаунтов</div>
+        <div class="value">{{ accounts|length }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Проектов</div>
+        <div class="value">{{ total_projects }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Всего Floating IP</div>
+        <div class="value" id="total-ips">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Привязано к ВМ</div>
+        <div class="value" style="color: #10b981;">{{ stats.attached }}</div>
+    </div>
+</div>
+
+{% for account in accounts %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #334155;">
+        <h2 style="margin: 0;">
+            👤 {{ account.username }}
+        </h2>
+        <span class="badge badge-green" style="font-size: 0.9rem;">
+            {{ account.total_ips }} IP
+        </span>
+    </div>
+    
+    {% for project in account.projects %}
+    <div style="margin-bottom: 1rem; padding: 1rem; background: rgba(0,0,0,0.2); border-radius: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <div>
+                <span style="font-weight: 600; color: #f59e0b;">📦 {{ project.name }}</span>
+            </div>
+            <div>
+                {% if project.error %}
+                <span class="badge badge-red">{{ project.error[:30] }}</span>
+                {% else %}
+                <span class="badge" style="background: rgba(100,116,139,0.3); color: #94a3b8;">{{ project.ips|length }} IP</span>
+                {% endif %}
+            </div>
+        </div>
+        
+        {% if project.ips %}
+        <table style="margin: 0;">
+            <thead>
+                <tr>
+                    <th style="padding: 0.5rem;">Floating IP</th>
+                    <th style="padding: 0.5rem;">Статус</th>
+                    <th style="padding: 0.5rem;">Сервер</th>
+                    <th style="padding: 0.5rem;">Fixed IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ip in project.ips %}
+                <tr>
+                    <td style="padding: 0.5rem;"><code class="ip-code">{{ ip.ip }}</code></td>
+                    <td style="padding: 0.5rem;">
+                        {% if ip.attached %}
+                        <span class="badge badge-green">Привязан</span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(100,116,139,0.2); color: #64748b;">Свободен</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.5rem;">
+                        {% if ip.server_name %}
+                        <code style="font-size: 0.8rem;">{{ ip.server_name }}</code>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td style="padding: 0.5rem;">
+                        {% if ip.fixed_ip %}
+                        <code style="font-size: 0.8rem;">{{ ip.fixed_ip }}</code>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% elif not project.error %}
+        <div style="color: #64748b; font-size: 0.9rem;">Нет Floating IP</div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+
+{% if not accounts %}
+<div class="card">
+    <div class="empty">
+        <p>Проектов пока нет</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function refreshProjects() {
+    const btn = document.getElementById('refresh-btn');
+    const lastUpdate = document.getElementById('last-update');
+    
+    btn.disabled = true;
+    btn.textContent = '⏳ Обновление...';
+    lastUpdate.textContent = 'Обновление...';
+    
+    try {
+        const res = await fetch('/api/projects/refresh', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.ok) {
+            location.reload();
+        } else {
+            lastUpdate.textContent = 'Ошибка: ' + (data.error || 'неизвестная');
+        }
+    } catch (e) {
+        lastUpdate.textContent = 'Ошибка: ' + e.message;
+    }
+    
+    btn.disabled = false;
+    btn.textContent = '🔄 Обновить всё';
+}
+</script>
+{% endblock %}

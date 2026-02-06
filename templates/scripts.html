@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+
+{% block title %}Скрипты {{ server.name }} — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <h1>📜 Скрипты: {{ server.name }}</h1>
+    <a href="/servers" class="btn btn-secondary">← Назад к серверам</a>
+</div>
+
+<!-- Форма добавления скрипта -->
+<div class="card">
+    <h2>➕ Добавить скрипт</h2>
+    <form method="POST" action="/servers/{{ server.id }}/scripts/add">
+        <div class="form-row">
+            <div class="form-group">
+                <label>Название</label>
+                <input type="text" name="name" placeholder="Например: project-1" required>
+            </div>
+            <div class="form-group">
+                <label>Путь к скрипту</label>
+                <input type="text" name="path" placeholder="/opt/vkip/project1" required>
+            </div>
+            <div class="form-group">
+                <label>Имя systemd сервиса</label>
+                <input type="text" name="service_name" placeholder="vkip-project1" required>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Аккаунт VK Cloud (OS_USERNAME)</label>
+                <input type="text" name="account_name" placeholder="user@mail.ru">
+            </div>
+            <div class="form-group">
+                <label>Проект (OS_PROJECT_NAME)</label>
+                <input type="text" name="project_name" placeholder="project-abc">
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Добавить скрипт</button>
+    </form>
+</div>
+
+<!-- Список скриптов -->
+<div class="card">
+    <h2>📋 Скрипты на сервере</h2>
+    
+    {% if scripts %}
+    <table>
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Путь</th>
+                <th>Сервис</th>
+                <th>Аккаунт</th>
+                <th>Проект</th>
+                <th>Статус</th>
+                <th>Циклов</th>
+                <th>Успехов</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in scripts %}
+            <tr>
+                <td><strong>{{ item.script.name }}</strong></td>
+                <td><code style="font-size: 0.8rem;">{{ item.script.path }}</code></td>
+                <td><code style="font-size: 0.8rem;">{{ item.script.service_name }}</code></td>
+                <td>{{ item.script.account_name or '-' }}</td>
+                <td>{{ item.script.project_name or '-' }}</td>
+                <td>
+                    {% if item.status.error %}
+                    <span class="badge badge-yellow" title="{{ item.status.error }}">Ошибка</span>
+                    {% elif item.status.running %}
+                    <span class="badge badge-green">Работает</span>
+                    {% else %}
+                    <span class="badge badge-red">Остановлен</span>
+                    {% endif %}
+                </td>
+                <td>{{ item.status.cycles }}</td>
+                <td>{{ item.status.success }}</td>
+                <td>
+                    <div class="actions">
+                        {% if item.status.running %}
+                        <form method="POST" action="/servers/{{ server.id }}/scripts/{{ item.script.id }}/stop" style="display:inline;">
+                            <button type="submit" class="btn btn-secondary btn-sm">Стоп</button>
+                        </form>
+                        <form method="POST" action="/servers/{{ server.id }}/scripts/{{ item.script.id }}/restart" style="display:inline;">
+                            <button type="submit" class="btn btn-secondary btn-sm">Рестарт</button>
+                        </form>
+                        {% else %}
+                        <form method="POST" action="/servers/{{ server.id }}/scripts/{{ item.script.id }}/start" style="display:inline;">
+                            <button type="submit" class="btn btn-primary btn-sm">Старт</button>
+                        </form>
+                        {% endif %}
+                        <form method="POST" action="/servers/{{ server.id }}/scripts/{{ item.script.id }}/delete" style="display:inline;" onsubmit="return confirm('Удалить скрипт?');">
+                            <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+        <p>Скриптов на этом сервере пока нет. Добавьте первый скрипт выше.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Автообновление каждые 30 секунд
+setTimeout(() => location.reload(), 30000);
+</script>
+{% endblock %}
