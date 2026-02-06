@@ -152,11 +152,30 @@ async def servers_page(request: Request):
         return RedirectResponse("/login", status_code=303)
 
     data = load_data()
+    
+    # Добавляем статистику IP к проектам
+    projects = data.get("projects", [])
+    projects_cache = data.get("projects_cache", {})
+    
+    projects_with_stats = []
+    for proj in projects:
+        cached = projects_cache.get(proj["name"], {})
+        ips = cached.get("ips", [])
+        total = len(ips)
+        attached = sum(1 for ip in ips if ip.get("attached"))
+        
+        projects_with_stats.append({
+            **proj,
+            "total_ips": total,
+            "attached_ips": attached,
+            "free_ips": total - attached,
+        })
+    
     return templates.TemplateResponse("servers.html", {
         "request": request,
         "user": user,
         "servers": data.get("servers", []),
-        "projects": data.get("projects", []),
+        "projects": projects_with_stats,
         "status_cache": data.get("status_cache", {}),
         "last_update": data.get("last_update"),
     })

@@ -134,7 +134,7 @@
                                     <select id="project-{{ server.id }}-{{ script.id }}" class="project-select">
                                         <option value="">— Выбрать —</option>
                                         {% for project in projects %}
-                                        <option value="{{ project.name }}">{{ project.name }}</option>
+                                        <option value="{{ project.name }}">{{ project.name }} ({{ project.free_ips }}🆓 / {{ project.attached_ips }}📌)</option>
                                         {% endfor %}
                                     </select>
                                     <button type="button" class="btn btn-primary btn-sm" 
