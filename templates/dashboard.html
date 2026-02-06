@@ -6,6 +6,10 @@
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
     <h1>📊 Дашборд</h1>
     <div style="display: flex; align-items: center; gap: 1rem;">
+        <label style="display: flex; align-items: center; gap: 0.5rem; color: #64748b; font-size: 0.85rem; cursor: pointer;">
+            <input type="checkbox" id="auto-refresh" style="cursor: pointer;">
+            Автообновление
+        </label>
         <span id="last-update" style="color: #64748b; font-size: 0.9rem;" data-time="{{ last_update or '' }}">
             {% if last_update %}
             Обновлено: ...
@@ -57,7 +61,7 @@
         </thead>
         <tbody id="scripts-table">
             {% for item in scripts_info %}
-            <tr id="row-{{ item.server_id }}-{{ item.script.id }}">
+            <tr id="row-{{ item.server_id }}-{{ item.script.id }}" data-server="{{ item.server_id }}" data-script="{{ item.script.id }}">
                 <td>{{ item.server }}</td>
                 <td>{{ item.script.name }}</td>
                 <td class="account-cell" style="font-size: 0.8rem; color: #94a3b8; line-height: 1.3;">
@@ -66,7 +70,7 @@
                 </td>
                 <td class="status-cell">
                     {% if item.status.error %}
-                    <span class="badge badge-yellow" style="cursor:help;" title="{{ item.status.error }}">⚠️ {{ item.status.error[:30] }}...</span>
+                    <span class="badge badge-yellow" style="cursor:help;" title="{{ item.status.error }}">⚠️ Ошибка</span>
                     {% elif item.status.running %}
                     <span class="badge badge-green">Работает</span>
                     {% elif item.status %}
@@ -87,16 +91,19 @@
                 <td class="actions-cell">
                     <div class="actions">
                         {% if item.status.running %}
-                        <form method="POST" action="/servers/{{ item.server_id }}/scripts/{{ item.script.id }}/stop" style="display:inline;">
-                            <button type="submit" class="btn btn-secondary btn-sm">Стоп</button>
-                        </form>
-                        <form method="POST" action="/servers/{{ item.server_id }}/scripts/{{ item.script.id }}/restart" style="display:inline;">
-                            <button type="submit" class="btn btn-secondary btn-sm">Рестарт</button>
-                        </form>
+                        <button type="button" class="btn btn-secondary btn-sm" 
+                                onclick="scriptAction({{ item.server_id }}, {{ item.script.id }}, 'stop', this)">
+                            Стоп
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm"
+                                onclick="scriptAction({{ item.server_id }}, {{ item.script.id }}, 'restart', this)">
+                            Рестарт
+                        </button>
                         {% else %}
-                        <form method="POST" action="/servers/{{ item.server_id }}/scripts/{{ item.script.id }}/start" style="display:inline;">
-                            <button type="submit" class="btn btn-primary btn-sm">Старт</button>
-                        </form>
+                        <button type="button" class="btn btn-primary btn-sm"
+                                onclick="scriptAction({{ item.server_id }}, {{ item.script.id }}, 'start', this)">
+                            Старт
+                        </button>
                         {% endif %}
                     </div>
                 </td>
@@ -115,19 +122,23 @@
 
 {% block scripts %}
 <script>
+const TOTAL_SCRIPTS = {{ total_scripts }};
+let autoRefreshInterval = null;
+
 function timeAgo(dateStr) {
     if (!dateStr) return 'Ещё не обновлялось';
     
-    const date = new Date(dateStr.replace(' ', 'T') + 'Z');
+    // Парсим как локальное время (сервер отдаёт локальное)
+    const date = new Date(dateStr.replace(' ', 'T'));
     const now = new Date();
     const seconds = Math.floor((now - date) / 1000);
     
+    if (seconds < 0) return 'только что';
     if (seconds < 60) return 'только что';
     if (seconds < 120) return '1 мин назад';
     if (seconds < 3600) return Math.floor(seconds / 60) + ' мин назад';
     if (seconds < 7200) return '1 час назад';
     if (seconds < 86400) return Math.floor(seconds / 3600) + ' ч назад';
-    if (seconds < 172800) return '1 день назад';
     return Math.floor(seconds / 86400) + ' дн назад';
 }
 
@@ -148,7 +159,7 @@ async function refreshStatus() {
     const lastUpdate = document.getElementById('last-update');
     
     btn.disabled = true;
-    btn.textContent = '⏳ Обновление...';
+    btn.classList.add('btn-loading');
     lastUpdate.textContent = 'Обновление...';
     
     try {
@@ -158,17 +169,122 @@ async function refreshStatus() {
         if (data.ok) {
             lastUpdate.dataset.time = data.last_update;
             updateTimeAgo();
-            // Перезагружаем страницу чтобы показать новые данные
-            location.reload();
+            
+            // Обновляем счётчики
+            document.getElementById('running-count').textContent = data.running;
+            document.getElementById('stopped-count').textContent = TOTAL_SCRIPTS - data.running;
+            
+            showToast(`Обновлено: ${data.running} работают`, 'success');
+            
+            // Перезагружаем для обновления таблицы
+            setTimeout(() => location.reload(), 500);
         } else {
-            lastUpdate.textContent = 'Ошибка обновления';
+            showToast('Ошибка обновления', 'error');
         }
     } catch (e) {
-        lastUpdate.textContent = 'Ошибка: ' + e.message;
+        showToast('Ошибка: ' + e.message, 'error');
     }
     
     btn.disabled = false;
-    btn.textContent = '🔄 Обновить';
+    btn.classList.remove('btn-loading');
 }
+
+async function scriptAction(serverId, scriptId, action, btn) {
+    const actionNames = {
+        'start': 'Запуск',
+        'stop': 'Остановка', 
+        'restart': 'Перезапуск'
+    };
+    
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    
+    try {
+        const res = await fetch(`/servers/${serverId}/scripts/${scriptId}/${action}`, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const data = await res.json();
+        
+        if (data.ok) {
+            showToast(`${actionNames[action]}: успешно`, 'success');
+            
+            // Обновляем строку в таблице
+            updateRowStatus(serverId, scriptId, data.running);
+        } else {
+            showToast(`Ошибка: ${data.error || data.message}`, 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+    
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+}
+
+function updateRowStatus(serverId, scriptId, running) {
+    const row = document.getElementById(`row-${serverId}-${scriptId}`);
+    if (!row) return;
+    
+    const statusCell = row.querySelector('.status-cell');
+    const actionsCell = row.querySelector('.actions-cell');
+    
+    // Обновляем статус
+    if (running) {
+        statusCell.innerHTML = '<span class="badge badge-green">Работает</span>';
+        actionsCell.innerHTML = `
+            <div class="actions">
+                <button type="button" class="btn btn-secondary btn-sm" 
+                        onclick="scriptAction(${serverId}, ${scriptId}, 'stop', this)">
+                    Стоп
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm"
+                        onclick="scriptAction(${serverId}, ${scriptId}, 'restart', this)">
+                    Рестарт
+                </button>
+            </div>
+        `;
+    } else {
+        statusCell.innerHTML = '<span class="badge badge-red">Остановлен</span>';
+        actionsCell.innerHTML = `
+            <div class="actions">
+                <button type="button" class="btn btn-primary btn-sm"
+                        onclick="scriptAction(${serverId}, ${scriptId}, 'start', this)">
+                    Старт
+                </button>
+            </div>
+        `;
+    }
+    
+    // Обновляем счётчики
+    updateCounters();
+}
+
+function updateCounters() {
+    const rows = document.querySelectorAll('#scripts-table tr');
+    let running = 0;
+    
+    rows.forEach(row => {
+        const badge = row.querySelector('.badge-green');
+        if (badge) running++;
+    });
+    
+    document.getElementById('running-count').textContent = running;
+    document.getElementById('stopped-count').textContent = TOTAL_SCRIPTS - running;
+}
+
+// Автообновление
+document.getElementById('auto-refresh').addEventListener('change', function() {
+    if (this.checked) {
+        showToast('Автообновление включено (30 сек)', 'info');
+        autoRefreshInterval = setInterval(refreshStatus, 30000);
+    } else {
+        showToast('Автообновление выключено', 'info');
+        if (autoRefreshInterval) {
+            clearInterval(autoRefreshInterval);
+            autoRefreshInterval = null;
+        }
+    }
+});
 </script>
 {% endblock %}
