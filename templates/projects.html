@@ -39,70 +39,67 @@
 </div>
 
 {% for account in accounts %}
+{% set account_attached = [] %}
+{% set account_free = [] %}
+{% for project in account.projects %}
+    {% for ip in project.ips %}
+        {% if ip.attached %}
+            {% set _ = account_attached.append(1) %}
+        {% else %}
+            {% set _ = account_free.append(1) %}
+        {% endif %}
+    {% endfor %}
+{% endfor %}
+
 <div class="card" style="margin-bottom: 1.5rem;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #334155;">
         <h2 style="margin: 0;">
             👤 {{ account.username }}
         </h2>
-        <span class="badge badge-green" style="font-size: 0.9rem;">
-            {{ account.total_ips }} IP
-        </span>
+        <div style="display: flex; gap: 0.75rem; align-items: center;">
+            <span style="color: #94a3b8; font-size: 0.9rem;">{{ account.total_ips }} IP:</span>
+            <span class="badge badge-green">{{ account_attached|length }} привязано</span>
+            <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b;">{{ account_free|length }} свободно</span>
+        </div>
     </div>
     
     {% for project in account.projects %}
+    {% set proj_attached = [] %}
+    {% set proj_free = [] %}
+    {% for ip in project.ips %}
+        {% if ip.attached %}
+            {% set _ = proj_attached.append(1) %}
+        {% else %}
+            {% set _ = proj_free.append(1) %}
+        {% endif %}
+    {% endfor %}
+    
     <div style="margin-bottom: 1rem; padding: 1rem; background: rgba(0,0,0,0.2); border-radius: 8px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
             <div>
                 <span style="font-weight: 600; color: #f59e0b;">📦 {{ project.name }}</span>
             </div>
-            <div>
+            <div style="display: flex; gap: 0.5rem;">
                 {% if project.error %}
                 <span class="badge badge-red">{{ project.error[:30] }}</span>
                 {% else %}
-                <span class="badge" style="background: rgba(100,116,139,0.3); color: #94a3b8;">{{ project.ips|length }} IP</span>
+                <span class="badge badge-green" style="font-size: 0.75rem;">{{ proj_attached|length }} 📌</span>
+                <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b; font-size: 0.75rem;">{{ proj_free|length }} 🆓</span>
                 {% endif %}
             </div>
         </div>
         
         {% if project.ips %}
-        <table style="margin: 0;">
-            <thead>
-                <tr>
-                    <th style="padding: 0.5rem;">Floating IP</th>
-                    <th style="padding: 0.5rem;">Статус</th>
-                    <th style="padding: 0.5rem;">Сервер</th>
-                    <th style="padding: 0.5rem;">Fixed IP</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for ip in project.ips %}
-                <tr>
-                    <td style="padding: 0.5rem;"><code class="ip-code">{{ ip.ip }}</code></td>
-                    <td style="padding: 0.5rem;">
-                        {% if ip.attached %}
-                        <span class="badge badge-green">Привязан</span>
-                        {% else %}
-                        <span class="badge" style="background: rgba(100,116,139,0.2); color: #64748b;">Свободен</span>
-                        {% endif %}
-                    </td>
-                    <td style="padding: 0.5rem;">
-                        {% if ip.server_name %}
-                        <code style="font-size: 0.8rem;">{{ ip.server_name }}</code>
-                        {% else %}
-                        —
-                        {% endif %}
-                    </td>
-                    <td style="padding: 0.5rem;">
-                        {% if ip.fixed_ip %}
-                        <code style="font-size: 0.8rem;">{{ ip.fixed_ip }}</code>
-                        {% else %}
-                        —
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="ip-grid">
+            {% for ip in project.ips %}
+            <div class="ip-item {{ 'attached' if ip.attached else 'free' }}">
+                <code class="ip-address">{{ ip.ip }}</code>
+                {% if ip.server_name %}
+                <span class="ip-server">{{ ip.server_name }}</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
         {% elif not project.error %}
         <div style="color: #64748b; font-size: 0.9rem;">Нет Floating IP</div>
         {% endif %}
@@ -118,6 +115,51 @@
     </div>
 </div>
 {% endif %}
+
+<style>
+.ip-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.ip-item {
+    padding: 0.4rem 0.75rem;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.ip-item.attached {
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.ip-item.free {
+    background: rgba(100, 116, 139, 0.15);
+    border: 1px solid rgba(100, 116, 139, 0.2);
+}
+
+.ip-address {
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+}
+
+.ip-item.attached .ip-address {
+    color: #10b981;
+}
+
+.ip-server {
+    font-size: 0.7rem;
+    color: #64748b;
+}
+
+.ip-item.attached .ip-server {
+    color: #6ee7b7;
+}
+</style>
 {% endblock %}
 
 {% block scripts %}
@@ -127,7 +169,7 @@ async function refreshProjects() {
     const lastUpdate = document.getElementById('last-update');
     
     btn.disabled = true;
-    btn.textContent = '⏳ Обновление...';
+    btn.classList.add('btn-loading');
     lastUpdate.textContent = 'Обновление...';
     
     try {
@@ -150,7 +192,7 @@ async function refreshProjects() {
     }
     
     btn.disabled = false;
-    btn.textContent = '🔄 Обновить всё';
+    btn.classList.remove('btn-loading');
 }
 </script>
 {% endblock %}
