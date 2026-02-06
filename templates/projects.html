@@ -131,15 +131,21 @@ async function refreshProjects() {
     lastUpdate.textContent = 'Обновление...';
     
     try {
-        const res = await fetch('/api/projects/refresh', { method: 'POST' });
+        const res = await fetch('/api/projects/refresh', { 
+            method: 'POST',
+            credentials: 'same-origin'
+        });
         const data = await res.json();
         
         if (data.ok) {
-            location.reload();
+            showToast(`Обновлено: ${data.total_ips} IP`, 'success');
+            setTimeout(() => location.reload(), 500);
         } else {
-            lastUpdate.textContent = 'Ошибка: ' + (data.error || 'неизвестная');
+            showToast('Ошибка: ' + (data.error || 'неизвестная'), 'error');
+            lastUpdate.textContent = 'Ошибка обновления';
         }
     } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
         lastUpdate.textContent = 'Ошибка: ' + e.message;
     }
     

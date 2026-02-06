@@ -118,7 +118,8 @@ async function refreshCloud() {
         
         const res = await fetch('/api/cloud/refresh', { 
             method: 'POST',
-            signal: controller.signal 
+            signal: controller.signal,
+            credentials: 'same-origin'
         });
         clearTimeout(timeoutId);
         const data = await res.json();
