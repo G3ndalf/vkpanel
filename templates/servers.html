@@ -74,29 +74,30 @@
             <input type="text" id="project-search" class="project-search" placeholder="🔍 Поиск..." oninput="filterProjects()">
             <div id="projects-list" class="projects-list">
                 {% for project in projects %}
+                {% set cached = projects_cache.get(project.name, {}) if projects_cache else {} %}
+                {% set ips = cached.get('ips', []) %}
                 <div class="project-card" data-name="{{ project.name }}" data-username="{{ project.username }}" onclick="selectProject('{{ project.name }}')">
                     <div class="project-header">
-                        <span class="project-name">{{ project.name }}</span>
+                        <span class="project-name">📦 {{ project.name }}</span>
                         <span class="project-stats">
-                            <span class="stat-free">{{ project.free_ips }} 🆓</span>
                             <span class="stat-attached">{{ project.attached_ips }} 📌</span>
+                            <span class="stat-free">{{ project.free_ips }} 🆓</span>
                         </span>
                     </div>
                     <div class="project-account">👤 {{ project.username }}</div>
-                    {% if project.total_ips > 0 %}
-                    <div class="project-ips">
-                        {% set cached = projects_cache.get(project.name, {}) if projects_cache else {} %}
-                        {% for ip in cached.get('ips', [])[:5] %}
-                        <span class="ip-tag {{ 'attached' if ip.attached else 'free' }}">
-                            {{ ip.ip }}{% if ip.attached %} 📌{% endif %}
-                        </span>
+                    {% if ips %}
+                    <div class="ip-grid-modal">
+                        {% for ip in ips %}
+                        <div class="ip-chip {{ 'attached' if ip.attached else 'free' }}">
+                            <span class="ip-addr">{{ ip.ip }}</span>
+                            {% if ip.server_name %}
+                            <span class="ip-vm">{{ ip.server_name }}</span>
+                            {% endif %}
+                        </div>
                         {% endfor %}
-                        {% if project.total_ips > 5 %}
-                        <span class="ip-more">+{{ project.total_ips - 5 }} ещё</span>
-                        {% endif %}
                     </div>
                     {% else %}
-                    <div class="project-ips empty">Нет IP</div>
+                    <div class="project-empty">Нет IP</div>
                     {% endif %}
                 </div>
                 {% endfor %}
@@ -410,38 +411,54 @@
     margin-bottom: 0.75rem;
 }
 
-.project-ips {
+.ip-grid-modal {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
 }
 
-.project-ips.empty {
-    color: #64748b;
-    font-size: 0.8rem;
+.ip-chip {
+    padding: 0.3rem 0.6rem;
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
 }
 
-.ip-tag {
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
+.ip-chip.attached {
+    background: rgba(16, 185, 129, 0.25);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.ip-chip.free {
+    background: rgba(100, 116, 139, 0.15);
+    border: 1px solid rgba(100, 116, 139, 0.25);
+}
+
+.ip-addr {
+    font-family: 'Monaco', 'Menlo', monospace;
     font-size: 0.75rem;
-    font-family: monospace;
+    color: #e2e8f0;
 }
 
-.ip-tag.free {
-    background: rgba(16,185,129,0.2);
+.ip-chip.attached .ip-addr {
     color: #10b981;
 }
 
-.ip-tag.attached {
-    background: rgba(100,116,139,0.2);
-    color: #94a3b8;
+.ip-vm {
+    font-size: 0.65rem;
+    color: #64748b;
 }
 
-.ip-more {
+.ip-chip.attached .ip-vm {
+    color: #6ee7b7;
+}
+
+.project-empty {
     color: #64748b;
-    font-size: 0.75rem;
-    padding: 0.2rem 0.5rem;
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
 }
 </style>
 {% endblock %}
