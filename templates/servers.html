@@ -41,44 +41,194 @@
 
 <!-- Список серверов -->
 <div class="card">
-    <h2>📋 Список серверов</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;">📋 Список серверов ({{ servers|length }})</h2>
+        {% if servers %}
+        <div class="actions">
+            <button class="btn btn-secondary btn-sm" onclick="expandAll()">▼ Раскрыть все</button>
+            <button class="btn btn-secondary btn-sm" onclick="collapseAll()">▲ Скрыть все</button>
+        </div>
+        {% endif %}
+    </div>
     
     {% if servers %}
-    <table>
-        <thead>
-            <tr>
-                <th>Название</th>
-                <th>Хост</th>
-                <th>Порт</th>
-                <th>Пользователь</th>
-                <th>Скриптов</th>
-                <th>Действия</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for server in servers %}
-            <tr>
-                <td><strong>{{ server.name }}</strong></td>
-                <td><code class="ip-code">{{ server.host }}</code></td>
-                <td>{{ server.port }}</td>
-                <td>{{ server.user }}</td>
-                <td>{{ server.scripts|length if server.scripts else 0 }}</td>
-                <td>
-                    <div class="actions">
-                        <a href="/servers/{{ server.id }}/scripts" class="btn btn-primary btn-sm">Скрипты</a>
-                        <form method="POST" action="/servers/{{ server.id }}/delete" style="display:inline;" onsubmit="return confirm('Удалить сервер {{ server.name }}?');">
-                            <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="servers-list">
+        {% for server in servers %}
+        <div class="server-item" data-server-id="{{ server.id }}">
+            <div class="server-header" onclick="toggleServer({{ server.id }})">
+                <div class="server-info">
+                    <span class="server-arrow" id="arrow-{{ server.id }}">▶</span>
+                    <strong>{{ server.name }}</strong>
+                    <code class="ip-code" style="margin-left: 1rem;">{{ server.host }}</code>
+                    <span style="color: #64748b; margin-left: 1rem;">{{ server.user }}@:{{ server.port }}</span>
+                </div>
+                <div class="server-meta">
+                    <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b;">
+                        {{ server.scripts|length if server.scripts else 0 }} скриптов
+                    </span>
+                    <form method="POST" action="/servers/{{ server.id }}/delete" style="display:inline; margin-left: 0.5rem;" 
+                          onsubmit="event.stopPropagation(); return confirm('Удалить сервер {{ server.name }}?');">
+                        <button type="submit" class="btn btn-danger btn-sm" onclick="event.stopPropagation();">✕</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="server-scripts" id="scripts-{{ server.id }}" style="display: none;">
+                {% if server.scripts %}
+                <table style="margin: 0;">
+                    <thead>
+                        <tr>
+                            <th>Скрипт</th>
+                            <th>Путь</th>
+                            <th>Сервис</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for script in server.scripts %}
+                        <tr>
+                            <td><strong>{{ script.name }}</strong></td>
+                            <td><code style="font-size: 0.8rem;">{{ script.path }}</code></td>
+                            <td><code style="font-size: 0.8rem;">{{ script.service_name }}</code></td>
+                            <td>
+                                <form method="POST" action="/servers/{{ server.id }}/scripts/{{ script.id }}/delete" 
+                                      style="display:inline;" onsubmit="return confirm('Удалить скрипт {{ script.name }}?');">
+                                    <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                
+                <!-- Форма добавления скрипта -->
+                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #334155;">
+                    <form method="POST" action="/servers/{{ server.id }}/scripts/add" style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end;">
+                        <div class="form-group" style="margin: 0; flex: 1; min-width: 100px;">
+                            <label style="font-size: 0.75rem;">Имя</label>
+                            <input type="text" name="name" placeholder="vk5" required style="padding: 0.4rem;">
+                        </div>
+                        <div class="form-group" style="margin: 0; flex: 2; min-width: 150px;">
+                            <label style="font-size: 0.75rem;">Путь</label>
+                            <input type="text" name="path" placeholder="/root/vk5" required style="padding: 0.4rem;">
+                        </div>
+                        <div class="form-group" style="margin: 0; flex: 2; min-width: 150px;">
+                            <label style="font-size: 0.75rem;">Сервис</label>
+                            <input type="text" name="service_name" placeholder="vk-fip@vk5" required style="padding: 0.4rem;">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm">+ Добавить</button>
+                    </form>
+                </div>
+                {% else %}
+                <div style="padding: 1rem; color: #64748b; text-align: center;">
+                    Скриптов нет
+                    <form method="POST" action="/servers/{{ server.id }}/scripts/add" style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap;">
+                        <input type="text" name="name" placeholder="Имя (vk1)" required style="padding: 0.4rem; width: 100px;">
+                        <input type="text" name="path" placeholder="Путь (/root/vk1)" required style="padding: 0.4rem; width: 150px;">
+                        <input type="text" name="service_name" placeholder="Сервис (vk-fip@vk1)" required style="padding: 0.4rem; width: 150px;">
+                        <button type="submit" class="btn btn-primary btn-sm">+ Добавить</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
     {% else %}
     <div class="empty">
         <p>Серверов пока нет. Добавьте первый сервер выше.</p>
     </div>
     {% endif %}
 </div>
+
+<style>
+.servers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.server-item {
+    border: 1px solid #334155;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.server-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: rgba(0,0,0,0.2);
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.server-header:hover {
+    background: rgba(0,0,0,0.3);
+}
+
+.server-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.server-arrow {
+    display: inline-block;
+    transition: transform 0.2s;
+    color: #64748b;
+    width: 1rem;
+}
+
+.server-arrow.expanded {
+    transform: rotate(90deg);
+}
+
+.server-meta {
+    display: flex;
+    align-items: center;
+}
+
+.server-scripts {
+    padding: 1rem;
+    background: rgba(0,0,0,0.1);
+    border-top: 1px solid #334155;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleServer(serverId) {
+    const scripts = document.getElementById(`scripts-${serverId}`);
+    const arrow = document.getElementById(`arrow-${serverId}`);
+    
+    if (scripts.style.display === 'none') {
+        scripts.style.display = 'block';
+        arrow.classList.add('expanded');
+    } else {
+        scripts.style.display = 'none';
+        arrow.classList.remove('expanded');
+    }
+}
+
+function expandAll() {
+    document.querySelectorAll('.server-scripts').forEach(el => {
+        el.style.display = 'block';
+    });
+    document.querySelectorAll('.server-arrow').forEach(el => {
+        el.classList.add('expanded');
+    });
+}
+
+function collapseAll() {
+    document.querySelectorAll('.server-scripts').forEach(el => {
+        el.style.display = 'none';
+    });
+    document.querySelectorAll('.server-arrow').forEach(el => {
+        el.classList.remove('expanded');
+    });
+}
+</script>
 {% endblock %}
