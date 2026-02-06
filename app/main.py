@@ -157,6 +157,8 @@ async def servers_page(request: Request):
         "user": user,
         "servers": data.get("servers", []),
         "projects": data.get("projects", []),
+        "status_cache": data.get("status_cache", {}),
+        "last_update": data.get("last_update"),
     })
 
 
