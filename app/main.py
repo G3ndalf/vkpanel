@@ -23,7 +23,7 @@ from .data import (
     get_server_by_id, get_script_by_id,
     update_status_cache, get_cached_status, get_cached_cloud,
 )
-from .ssh import get_script_status, control_script, get_floating_ips_via_cli
+from .ssh import get_script_status, control_script, get_floating_ips_via_cli, change_script_project
 from .openstack import get_project_floating_ips
 
 # ─── Логирование ──────────────────────────────────────────────
@@ -156,6 +156,7 @@ async def servers_page(request: Request):
         "request": request,
         "user": user,
         "servers": data.get("servers", []),
+        "projects": data.get("projects", []),
     })
 
 
@@ -367,6 +368,57 @@ async def script_action(request: Request, server_id: int, script_id: int, action
     # Обычный редирект
     referer = request.headers.get("referer", "/")
     return RedirectResponse(referer, status_code=303)
+
+
+@app.post("/api/scripts/{server_id}/{script_id}/change-project")
+async def api_change_project(request: Request, server_id: int, script_id: int, project_name: str = Form(...)):
+    """Сменить проект для скрипта."""
+    if not get_current_user(request):
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            raise HTTPException(status_code=401)
+        return RedirectResponse("/login", status_code=303)
+
+    data = load_data()
+    server = get_server_by_id(data, server_id)
+    if not server:
+        return JSONResponse({"ok": False, "error": "Server not found"}, status_code=404)
+
+    script = get_script_by_id(server, script_id)
+    if not script:
+        return JSONResponse({"ok": False, "error": "Script not found"}, status_code=404)
+
+    # Ищем проект по имени
+    projects = data.get("projects", [])
+    project = next((p for p in projects if p["name"] == project_name), None)
+    if not project:
+        return JSONResponse({"ok": False, "error": f"Project '{project_name}' not found"}, status_code=404)
+
+    # Меняем проект
+    success, msg = change_script_project(server, script, project)
+
+    if success:
+        # Обновляем кэш
+        new_status = get_script_status(server, script)
+        update_status_cache(data, server_id, script_id, {
+            "server_id": server_id,
+            "script_id": script_id,
+            "server_name": server["name"],
+            "script_name": script["name"],
+            "running": new_status["running"],
+            "cycles": new_status["cycles"],
+            "success": new_status["success"],
+            "last_ip": new_status["last_ip"],
+            "error": new_status["error"],
+            "account": new_status["account"],
+            "project": new_status["project"],
+        })
+        save_data(data)
+
+    return JSONResponse({
+        "ok": success,
+        "message": msg,
+        "project": project_name if success else None,
+    })
 
 
 # ─── API ──────────────────────────────────────────────────────

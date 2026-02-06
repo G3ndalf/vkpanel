@@ -255,3 +255,94 @@ def get_floating_ips_via_cli(server: dict, script: dict) -> dict:
             client.close()
 
     return result
+
+
+def change_script_project(server: dict, script: dict, project: dict) -> tuple[bool, str]:
+    """
+    Сменить проект (аккаунт) для скрипта.
+    
+    Обновляет .env файл на сервере и перезапускает скрипт.
+    
+    Args:
+        server: данные сервера
+        script: данные скрипта
+        project: данные проекта (username, password, project_id, name, auth_url)
+    
+    Returns:
+        (success, message)
+    """
+    client = None
+    try:
+        client = ssh_connect(
+            server["host"],
+            server.get("port", 22),
+            server["user"],
+            server.get("password"),
+            server.get("key_path"),
+        )
+
+        env_file = f"{script['path']}/.env"
+        service_name = script.get("service_name", f"vkip-{script['name']}")
+
+        # Читаем текущий .env
+        code, current_env, err = ssh_exec(client, f"cat {env_file}")
+        if code != 0:
+            return False, f"Failed to read .env: {err}"
+
+        # Обновляем переменные
+        new_lines = []
+        updated_keys = set()
+        
+        updates = {
+            "OS_USERNAME": project["username"],
+            "OS_PASSWORD": project["password"],
+            "OS_PROJECT_ID": project["project_id"],
+            "OS_PROJECT_NAME": project["name"],
+        }
+        
+        # Если есть auth_url, обновляем и его
+        if project.get("auth_url"):
+            updates["OS_AUTH_URL"] = project["auth_url"]
+
+        for line in current_env.split("\n"):
+            line_stripped = line.strip()
+            if not line_stripped or line_stripped.startswith("#"):
+                new_lines.append(line)
+                continue
+            
+            # Проверяем, нужно ли обновить эту строку
+            key = line_stripped.split("=")[0] if "=" in line_stripped else None
+            if key in updates:
+                new_lines.append(f'{key}="{updates[key]}"')
+                updated_keys.add(key)
+            else:
+                new_lines.append(line)
+        
+        # Добавляем отсутствующие ключи
+        for key, value in updates.items():
+            if key not in updated_keys:
+                new_lines.append(f'{key}="{value}"')
+
+        new_env = "\n".join(new_lines)
+
+        # Записываем новый .env
+        # Экранируем для bash
+        escaped_env = new_env.replace("'", "'\\''")
+        code, out, err = ssh_exec(client, f"echo '{escaped_env}' > {env_file}")
+        if code != 0:
+            return False, f"Failed to write .env: {err}"
+
+        # Перезапускаем скрипт
+        code, out, err = ssh_exec(client, f"systemctl restart {service_name}")
+        if code != 0:
+            return False, f"Failed to restart service: {err}"
+
+        logger.info(f"Changed project for {server['name']}/{script['name']} to {project['name']}")
+        return True, f"Проект изменён на {project['name']}, скрипт перезапущен"
+
+    except Exception as e:
+        logger.error(f"change_script_project failed: {e}")
+        return False, str(e)
+    finally:
+        if client:
+            client.close()

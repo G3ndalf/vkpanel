@@ -81,7 +81,7 @@
                             <th>Скрипт</th>
                             <th>Путь</th>
                             <th>Сервис</th>
-                            <th>Действия</th>
+                            <th>Сменить проект</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -91,43 +91,27 @@
                             <td><code style="font-size: 0.8rem;">{{ script.path }}</code></td>
                             <td><code style="font-size: 0.8rem;">{{ script.service_name }}</code></td>
                             <td>
-                                <form method="POST" action="/servers/{{ server.id }}/scripts/{{ script.id }}/delete" 
-                                      style="display:inline;" onsubmit="return confirm('Удалить скрипт {{ script.name }}?');">
-                                    <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
-                                </form>
+                                <div class="project-selector">
+                                    <select id="project-{{ server.id }}-{{ script.id }}" class="project-select">
+                                        <option value="">— Выбрать проект —</option>
+                                        {% for project in projects %}
+                                        <option value="{{ project.name }}">{{ project.name }} ({{ project.username }})</option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="button" class="btn btn-primary btn-sm" 
+                                            onclick="changeProject({{ server.id }}, {{ script.id }})"
+                                            id="btn-{{ server.id }}-{{ script.id }}">
+                                        Сменить
+                                    </button>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
-                
-                <!-- Форма добавления скрипта -->
-                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #334155;">
-                    <form method="POST" action="/servers/{{ server.id }}/scripts/add" style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end;">
-                        <div class="form-group" style="margin: 0; flex: 1; min-width: 100px;">
-                            <label style="font-size: 0.75rem;">Имя</label>
-                            <input type="text" name="name" placeholder="vk5" required style="padding: 0.4rem;">
-                        </div>
-                        <div class="form-group" style="margin: 0; flex: 2; min-width: 150px;">
-                            <label style="font-size: 0.75rem;">Путь</label>
-                            <input type="text" name="path" placeholder="/root/vk5" required style="padding: 0.4rem;">
-                        </div>
-                        <div class="form-group" style="margin: 0; flex: 2; min-width: 150px;">
-                            <label style="font-size: 0.75rem;">Сервис</label>
-                            <input type="text" name="service_name" placeholder="vk-fip@vk5" required style="padding: 0.4rem;">
-                        </div>
-                        <button type="submit" class="btn btn-primary btn-sm">+ Добавить</button>
-                    </form>
-                </div>
                 {% else %}
                 <div style="padding: 1rem; color: #64748b; text-align: center;">
                     Скриптов нет
-                    <form method="POST" action="/servers/{{ server.id }}/scripts/add" style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: center; flex-wrap: wrap;">
-                        <input type="text" name="name" placeholder="Имя (vk1)" required style="padding: 0.4rem; width: 100px;">
-                        <input type="text" name="path" placeholder="Путь (/root/vk1)" required style="padding: 0.4rem; width: 150px;">
-                        <input type="text" name="service_name" placeholder="Сервис (vk-fip@vk1)" required style="padding: 0.4rem; width: 150px;">
-                        <button type="submit" class="btn btn-primary btn-sm">+ Добавить</button>
-                    </form>
                 </div>
                 {% endif %}
             </div>
@@ -195,6 +179,27 @@
     background: rgba(0,0,0,0.1);
     border-top: 1px solid #334155;
 }
+
+.project-selector {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.project-select {
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 0.8rem;
+    min-width: 200px;
+}
+
+.project-select:focus {
+    outline: none;
+    border-color: #f59e0b;
+}
 </style>
 {% endblock %}
 
@@ -229,6 +234,48 @@ function collapseAll() {
     document.querySelectorAll('.server-arrow').forEach(el => {
         el.classList.remove('expanded');
     });
+}
+
+async function changeProject(serverId, scriptId) {
+    const select = document.getElementById(`project-${serverId}-${scriptId}`);
+    const btn = document.getElementById(`btn-${serverId}-${scriptId}`);
+    const projectName = select.value;
+    
+    if (!projectName) {
+        showToast('Выберите проект', 'error');
+        return;
+    }
+    
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    
+    try {
+        const formData = new FormData();
+        formData.append('project_name', projectName);
+        
+        const res = await fetch(`/api/scripts/${serverId}/${scriptId}/change-project`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        
+        const data = await res.json();
+        
+        if (data.ok) {
+            showToast(data.message, 'success');
+            select.value = '';
+        } else {
+            showToast('Ошибка: ' + (data.error || data.message), 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+    
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
 }
 </script>
 {% endblock %}
