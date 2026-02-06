@@ -63,6 +63,48 @@
         {% endif %}
     </div>
     
+    <!-- Модальное окно выбора проекта -->
+<div id="project-modal" class="modal" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>📂 Выбор проекта</h3>
+            <button class="modal-close" onclick="closeProjectModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <input type="text" id="project-search" class="project-search" placeholder="🔍 Поиск..." oninput="filterProjects()">
+            <div id="projects-list" class="projects-list">
+                {% for project in projects %}
+                <div class="project-card" data-name="{{ project.name }}" data-username="{{ project.username }}" onclick="selectProject('{{ project.name }}')">
+                    <div class="project-header">
+                        <span class="project-name">{{ project.name }}</span>
+                        <span class="project-stats">
+                            <span class="stat-free">{{ project.free_ips }} 🆓</span>
+                            <span class="stat-attached">{{ project.attached_ips }} 📌</span>
+                        </span>
+                    </div>
+                    <div class="project-account">👤 {{ project.username }}</div>
+                    {% if project.total_ips > 0 %}
+                    <div class="project-ips">
+                        {% set cached = projects_cache.get(project.name, {}) if projects_cache else {} %}
+                        {% for ip in cached.get('ips', [])[:5] %}
+                        <span class="ip-tag {{ 'attached' if ip.attached else 'free' }}">
+                            {{ ip.ip }}{% if ip.attached %} 📌{% endif %}
+                        </span>
+                        {% endfor %}
+                        {% if project.total_ips > 5 %}
+                        <span class="ip-more">+{{ project.total_ips - 5 }} ещё</span>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="project-ips empty">Нет IP</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
     {% if servers %}
     <div class="servers-list">
         {% for server in servers %}
@@ -130,19 +172,10 @@
                             <td>{{ status.cycles or '—' }}</td>
                             <td>{{ status.success or '—' }}</td>
                             <td>
-                                <div class="project-selector">
-                                    <select id="project-{{ server.id }}-{{ script.id }}" class="project-select">
-                                        <option value="">— Выбрать —</option>
-                                        {% for project in projects %}
-                                        <option value="{{ project.name }}">{{ project.name }} ({{ project.free_ips }}🆓 / {{ project.attached_ips }}📌)</option>
-                                        {% endfor %}
-                                    </select>
-                                    <button type="button" class="btn btn-primary btn-sm" 
-                                            onclick="changeProject({{ server.id }}, {{ script.id }})"
-                                            id="btn-{{ server.id }}-{{ script.id }}">
-                                        →
-                                    </button>
-                                </div>
+                                <button type="button" class="btn btn-secondary btn-sm"
+                                        onclick="openProjectModal({{ server.id }}, {{ script.id }})">
+                                    📂 Сменить
+                                </button>
                             </td>
                             <td>
                                 <button type="button" class="btn btn-secondary btn-sm" 
@@ -245,6 +278,170 @@
 .project-select:focus {
     outline: none;
     border-color: #f59e0b;
+}
+
+/* Модальное окно */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: #1e293b;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow: hidden;
+    border: 1px solid #334155;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #334155;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: #ef4444;
+}
+
+.modal-body {
+    padding: 1rem;
+    overflow-y: auto;
+    max-height: calc(80vh - 60px);
+}
+
+.project-search {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+}
+
+.project-search:focus {
+    outline: none;
+    border-color: #f59e0b;
+}
+
+.projects-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.project-card {
+    background: rgba(0,0,0,0.2);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.project-card:hover {
+    background: rgba(245,158,11,0.1);
+    border-color: #f59e0b;
+}
+
+.project-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.project-name {
+    font-weight: 600;
+    color: #f59e0b;
+    font-size: 1rem;
+}
+
+.project-stats {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.stat-free {
+    color: #10b981;
+}
+
+.stat-attached {
+    color: #64748b;
+}
+
+.project-account {
+    color: #94a3b8;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+}
+
+.project-ips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.project-ips.empty {
+    color: #64748b;
+    font-size: 0.8rem;
+}
+
+.ip-tag {
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: monospace;
+}
+
+.ip-tag.free {
+    background: rgba(16,185,129,0.2);
+    color: #10b981;
+}
+
+.ip-tag.attached {
+    background: rgba(100,116,139,0.2);
+    color: #94a3b8;
+}
+
+.ip-more {
+    color: #64748b;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
 }
 </style>
 {% endblock %}
@@ -372,24 +569,58 @@ async function refreshScript(serverId, scriptId, btn) {
     btn.classList.remove('btn-loading');
 }
 
-async function changeProject(serverId, scriptId) {
-    const select = document.getElementById(`project-${serverId}-${scriptId}`);
-    const btn = document.getElementById(`btn-${serverId}-${scriptId}`);
-    const projectName = select.value;
-    
-    if (!projectName) {
-        showToast('Выберите проект', 'error');
-        return;
+// Модальное окно
+let currentServerId = null;
+let currentScriptId = null;
+
+function openProjectModal(serverId, scriptId) {
+    currentServerId = serverId;
+    currentScriptId = scriptId;
+    document.getElementById('project-modal').classList.add('active');
+    document.getElementById('project-search').value = '';
+    filterProjects();
+    document.getElementById('project-search').focus();
+}
+
+function closeProjectModal() {
+    document.getElementById('project-modal').classList.remove('active');
+    currentServerId = null;
+    currentScriptId = null;
+}
+
+function closeModalOnBackdrop(event) {
+    if (event.target.id === 'project-modal') {
+        closeProjectModal();
     }
+}
+
+function filterProjects() {
+    const search = document.getElementById('project-search').value.toLowerCase();
+    const cards = document.querySelectorAll('.project-card');
     
-    btn.disabled = true;
-    btn.classList.add('btn-loading');
+    cards.forEach(card => {
+        const name = card.dataset.name.toLowerCase();
+        const username = card.dataset.username.toLowerCase();
+        
+        if (name.includes(search) || username.includes(search)) {
+            card.style.display = 'block';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+async function selectProject(projectName) {
+    if (!currentServerId || !currentScriptId) return;
+    
+    closeProjectModal();
+    showToast('Меняем проект...', 'info');
     
     try {
         const formData = new FormData();
         formData.append('project_name', projectName);
         
-        const res = await fetch(`/api/scripts/${serverId}/${scriptId}/change-project`, {
+        const res = await fetch(`/api/scripts/${currentServerId}/${currentScriptId}/change-project`, {
             method: 'POST',
             body: formData,
             credentials: 'same-origin',
@@ -402,8 +633,6 @@ async function changeProject(serverId, scriptId) {
         
         if (data.ok) {
             showToast(data.message, 'success');
-            select.value = '';
-            // Обновим статус скрипта
             setTimeout(() => location.reload(), 1000);
         } else {
             showToast('Ошибка: ' + (data.error || data.message), 'error');
@@ -411,9 +640,13 @@ async function changeProject(serverId, scriptId) {
     } catch (e) {
         showToast('Ошибка: ' + e.message, 'error');
     }
-    
-    btn.disabled = false;
-    btn.classList.remove('btn-loading');
 }
+
+// Закрытие по Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeProjectModal();
+    }
+});
 </script>
 {% endblock %}
