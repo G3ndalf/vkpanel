@@ -770,9 +770,8 @@ async def api_projects_refresh(request: Request):
 @app.post("/api/projects/add")
 async def api_add_project(
     request: Request,
-    name: str = Form(...),
     script: str = Form(...),
-    password: str = Form(...),
+    password: str = Form(""),
 ):
     """Добавить новый проект из openrc скрипта."""
     if not get_current_user(request):
@@ -784,6 +783,7 @@ async def api_add_project(
     auth_url_match = re.search(r'OS_AUTH_URL[="]+(https?://[^"\']+)', script)
     project_id_match = re.search(r'OS_PROJECT_ID[="]+([\w-]+)', script)
     username_match = re.search(r'OS_USERNAME[="]+([\w@._-]+)', script)
+    project_name_match = re.search(r'OS_PROJECT_NAME[="]+([\w-]+)', script)
     
     if not auth_url_match:
         return JSONResponse({"ok": False, "error": "OS_AUTH_URL не найден"}, status_code=400)
@@ -796,6 +796,17 @@ async def api_add_project(
     project_id = project_id_match.group(1)
     username = username_match.group(1)
     
+    # Имя проекта: из OS_PROJECT_NAME или генерируем из project_id
+    if project_name_match:
+        name = project_name_match.group(1)
+    else:
+        # Берём первые 8 символов project_id как имя
+        name = f"mcs{project_id[:8]}"
+    
+    # Пароль по умолчанию
+    if not password.strip():
+        password = "Haxoastemir29"
+    
     # Создаём проект
     new_project = {
         "name": name,
@@ -807,10 +818,10 @@ async def api_add_project(
     
     data = load_data()
     
-    # Проверяем дубликат
-    existing = next((p for p in data.get("projects", []) if p["name"] == name), None)
+    # Проверяем дубликат по project_id
+    existing = next((p for p in data.get("projects", []) if p["project_id"] == project_id), None)
     if existing:
-        return JSONResponse({"ok": False, "error": f"Проект '{name}' уже существует"}, status_code=400)
+        return JSONResponse({"ok": False, "error": f"Проект с таким ID уже существует ({existing['name']})"}, status_code=400)
     
     if "projects" not in data:
         data["projects"] = []

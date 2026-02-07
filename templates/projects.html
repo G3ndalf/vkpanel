@@ -32,16 +32,12 @@
         <div class="modal-body">
             <form id="add-project-form" onsubmit="submitProject(event)">
                 <div class="form-group">
-                    <label>Название проекта</label>
-                    <input type="text" name="name" id="project-name" placeholder="mcs1234567890" required>
-                </div>
-                <div class="form-group">
                     <label>OpenRC скрипт (вставьте полностью)</label>
-                    <textarea name="script" id="project-script" rows="8" placeholder="#!/usr/bin/env bash&#10;export OS_AUTH_URL=..." required style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                    <textarea name="script" id="project-script" rows="10" placeholder="#!/usr/bin/env bash&#10;export OS_AUTH_URL=...&#10;export OS_PROJECT_ID=...&#10;export OS_USERNAME=..." required style="font-family: monospace; font-size: 0.8rem;"></textarea>
                 </div>
                 <div class="form-group">
-                    <label>Пароль от аккаунта VK Cloud</label>
-                    <input type="password" name="password" id="project-password" placeholder="Пароль" required>
+                    <label>Пароль <span style="color: #64748b; font-weight: normal;">(по умолчанию: Haxoastemir29)</span></label>
+                    <input type="password" name="password" id="project-password" placeholder="Оставьте пустым для пароля по умолчанию">
                 </div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                     <button type="button" class="btn btn-secondary" onclick="closeAddModal()">Отмена</button>
