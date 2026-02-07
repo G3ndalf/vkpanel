@@ -767,6 +767,94 @@ async def api_projects_refresh(request: Request):
     }
 
 
+@app.post("/api/projects/add")
+async def api_add_project(
+    request: Request,
+    name: str = Form(...),
+    script: str = Form(...),
+    password: str = Form(...),
+):
+    """Добавить новый проект из openrc скрипта."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    # Парсим скрипт
+    import re
+    
+    auth_url_match = re.search(r'OS_AUTH_URL[="]+(https?://[^"\']+)', script)
+    project_id_match = re.search(r'OS_PROJECT_ID[="]+([\w-]+)', script)
+    username_match = re.search(r'OS_USERNAME[="]+([\w@._-]+)', script)
+    
+    if not auth_url_match:
+        return JSONResponse({"ok": False, "error": "OS_AUTH_URL не найден"}, status_code=400)
+    if not project_id_match:
+        return JSONResponse({"ok": False, "error": "OS_PROJECT_ID не найден"}, status_code=400)
+    if not username_match:
+        return JSONResponse({"ok": False, "error": "OS_USERNAME не найден"}, status_code=400)
+    
+    auth_url = auth_url_match.group(1).rstrip('"').rstrip("'")
+    project_id = project_id_match.group(1)
+    username = username_match.group(1)
+    
+    # Создаём проект
+    new_project = {
+        "name": name,
+        "username": username,
+        "password": password,
+        "auth_url": auth_url,
+        "project_id": project_id,
+    }
+    
+    data = load_data()
+    
+    # Проверяем дубликат
+    existing = next((p for p in data.get("projects", []) if p["name"] == name), None)
+    if existing:
+        return JSONResponse({"ok": False, "error": f"Проект '{name}' уже существует"}, status_code=400)
+    
+    if "projects" not in data:
+        data["projects"] = []
+    
+    data["projects"].append(new_project)
+    save_data(data)
+    
+    logger.info(f"Project added: {name} ({username})")
+    
+    return JSONResponse({
+        "ok": True,
+        "message": f"Проект '{name}' добавлен",
+        "project": {
+            "name": name,
+            "username": username,
+        }
+    })
+
+
+@app.post("/api/projects/{project_name}/delete")
+async def api_delete_project(request: Request, project_name: str):
+    """Удалить проект."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    projects = data.get("projects", [])
+    
+    project = next((p for p in projects if p["name"] == project_name), None)
+    if not project:
+        return JSONResponse({"ok": False, "error": "Проект не найден"}, status_code=404)
+    
+    data["projects"] = [p for p in projects if p["name"] != project_name]
+    
+    # Удаляем из кэша
+    if project_name in data.get("projects_cache", {}):
+        del data["projects_cache"][project_name]
+    
+    save_data(data)
+    logger.info(f"Project deleted: {project_name}")
+    
+    return JSONResponse({"ok": True, "message": f"Проект '{project_name}' удалён"})
+
+
 # ─── IPs страница ─────────────────────────────────────────────
 
 @app.get("/ips", response_class=HTMLResponse)

@@ -13,9 +13,42 @@
             Ещё не обновлялось
             {% endif %}
         </span>
+        <button class="btn btn-secondary" onclick="openAddModal()">
+            ➕ Добавить проект
+        </button>
         <button id="refresh-btn" class="btn btn-primary" onclick="refreshProjects()">
             🔄 Обновить всё
         </button>
+    </div>
+</div>
+
+<!-- Модальное окно добавления проекта -->
+<div id="add-modal" class="modal" onclick="closeModalOnBackdrop(event)">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h3>➕ Добавить проект</h3>
+            <button class="modal-close" onclick="closeAddModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <form id="add-project-form" onsubmit="submitProject(event)">
+                <div class="form-group">
+                    <label>Название проекта</label>
+                    <input type="text" name="name" id="project-name" placeholder="mcs1234567890" required>
+                </div>
+                <div class="form-group">
+                    <label>OpenRC скрипт (вставьте полностью)</label>
+                    <textarea name="script" id="project-script" rows="8" placeholder="#!/usr/bin/env bash&#10;export OS_AUTH_URL=..." required style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Пароль от аккаунта VK Cloud</label>
+                    <input type="password" name="password" id="project-password" placeholder="Пароль" required>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeAddModal()">Отмена</button>
+                    <button type="submit" class="btn btn-primary" id="submit-btn">Добавить</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -117,6 +150,81 @@
 {% endif %}
 
 <style>
+/* Модальное окно */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+
+.modal.active {
+    display: flex;
+}
+
+.modal-content {
+    background: #1e293b;
+    border-radius: 12px;
+    width: 90%;
+    max-height: 80vh;
+    overflow: hidden;
+    border: 1px solid #334155;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #334155;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+
+.modal-close:hover {
+    color: #ef4444;
+}
+
+.modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    max-height: calc(80vh - 60px);
+}
+
+.modal-body textarea {
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #e2e8f0;
+    resize: vertical;
+}
+
+.modal-body textarea:focus {
+    outline: none;
+    border-color: #f59e0b;
+}
+
 .ip-grid {
     display: flex;
     flex-wrap: wrap;
@@ -194,5 +302,62 @@ async function refreshProjects() {
     btn.disabled = false;
     btn.classList.remove('btn-loading');
 }
+
+// Модальное окно добавления
+function openAddModal() {
+    document.getElementById('add-modal').classList.add('active');
+    document.getElementById('project-name').focus();
+}
+
+function closeAddModal() {
+    document.getElementById('add-modal').classList.remove('active');
+    document.getElementById('add-project-form').reset();
+}
+
+function closeModalOnBackdrop(event) {
+    if (event.target.id === 'add-modal') {
+        closeAddModal();
+    }
+}
+
+async function submitProject(event) {
+    event.preventDefault();
+    
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    
+    const formData = new FormData(document.getElementById('add-project-form'));
+    
+    try {
+        const res = await fetch('/api/projects/add', {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+        });
+        
+        const data = await res.json();
+        
+        if (data.ok) {
+            showToast(data.message, 'success');
+            closeAddModal();
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+    
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+}
+
+// Закрытие по Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeAddModal();
+    }
+});
 </script>
 {% endblock %}
