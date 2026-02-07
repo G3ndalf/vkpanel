@@ -73,32 +73,60 @@
         <div class="modal-body">
             <input type="text" id="project-search" class="project-search" placeholder="🔍 Поиск..." oninput="filterProjects()">
             <div id="projects-list" class="projects-list">
+                {% set accounts_dict = {} %}
                 {% for project in projects %}
-                {% set cached = projects_cache.get(project.name, {}) if projects_cache else {} %}
-                {% set ips = cached.get('ips', []) %}
-                <div class="project-card" data-name="{{ project.name }}" data-username="{{ project.username }}" onclick="selectProject('{{ project.name }}')">
-                    <div class="project-header">
-                        <span class="project-name">📦 {{ project.name }}</span>
-                        <span class="project-stats">
-                            <span class="stat-attached">{{ project.attached_ips }} 📌</span>
-                            <span class="stat-free">{{ project.free_ips }} 🆓</span>
+                    {% if project.username not in accounts_dict %}
+                        {% set _ = accounts_dict.update({project.username: []}) %}
+                    {% endif %}
+                    {% set _ = accounts_dict[project.username].append(project) %}
+                {% endfor %}
+                
+                {% for username, account_projects in accounts_dict.items() %}
+                {% set acc_attached = [] %}
+                {% set acc_free = [] %}
+                {% for p in account_projects %}
+                    {% set _ = acc_attached.extend([1] * p.attached_ips) %}
+                    {% set _ = acc_free.extend([1] * p.free_ips) %}
+                {% endfor %}
+                
+                <div class="account-group" data-username="{{ username }}">
+                    <div class="account-header">
+                        <span class="account-name">👤 {{ username }}</span>
+                        <span class="account-stats">
+                            <span class="stat-attached">{{ acc_attached|length }} 📌</span>
+                            <span class="stat-free">{{ acc_free|length }} 🆓</span>
                         </span>
                     </div>
-                    <div class="project-account">👤 {{ project.username }}</div>
-                    {% if ips %}
-                    <div class="ip-grid-modal">
-                        {% for ip in ips %}
-                        <div class="ip-chip {{ 'attached' if ip.attached else 'free' }}">
-                            <span class="ip-addr">{{ ip.ip }}</span>
-                            {% if ip.server_name %}
-                            <span class="ip-vm">{{ ip.server_name }}</span>
+                    
+                    <div class="account-projects">
+                        {% for project in account_projects %}
+                        {% set cached = projects_cache.get(project.name, {}) if projects_cache else {} %}
+                        {% set ips = cached.get('ips', []) %}
+                        <div class="project-card" data-name="{{ project.name }}" data-username="{{ project.username }}" onclick="selectProject('{{ project.name }}')">
+                            <div class="project-header">
+                                <span class="project-name">📦 {{ project.name }}</span>
+                                <span class="project-stats">
+                                    <span class="stat-attached">{{ project.attached_ips }} 📌</span>
+                                    <span class="stat-free">{{ project.free_ips }} 🆓</span>
+                                </span>
+                            </div>
+                            {% if ips %}
+                            <div class="ip-grid-modal">
+                                {% for ip in ips %}
+                                <div class="ip-chip {{ 'attached' if ip.attached else 'free' }}">
+                                    <span class="ip-addr">{{ ip.ip }}</span>
+                                    {% if ip.server_name %}
+                                    <span class="ip-vm">{{ ip.server_name }}</span>
+                                    {% endif %}
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% else %}
+                            <div class="project-empty">Нет IP</div>
                             {% endif %}
                         </div>
                         {% endfor %}
                     </div>
-                    {% else %}
-                    <div class="project-empty">Нет IP</div>
-                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
@@ -460,6 +488,56 @@
     font-size: 0.8rem;
     margin-top: 0.5rem;
 }
+
+/* Группировка по аккаунтам */
+.account-group {
+    margin-bottom: 1rem;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.account-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: rgba(245, 158, 11, 0.1);
+    border-bottom: 1px solid #334155;
+}
+
+.account-name {
+    font-weight: 600;
+    color: #f59e0b;
+    font-size: 0.95rem;
+}
+
+.account-stats {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.account-projects {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.account-projects .project-card {
+    border: none;
+    border-radius: 0;
+    border-bottom: 1px solid #334155;
+    margin: 0;
+}
+
+.account-projects .project-card:last-child {
+    border-bottom: none;
+}
+
+.account-projects .project-card:hover {
+    border-radius: 0;
+}
 </style>
 {% endblock %}
 
@@ -613,17 +691,26 @@ function closeModalOnBackdrop(event) {
 
 function filterProjects() {
     const search = document.getElementById('project-search').value.toLowerCase();
-    const cards = document.querySelectorAll('.project-card');
+    const groups = document.querySelectorAll('.account-group');
     
-    cards.forEach(card => {
-        const name = card.dataset.name.toLowerCase();
-        const username = card.dataset.username.toLowerCase();
+    groups.forEach(group => {
+        const username = group.dataset.username.toLowerCase();
+        const cards = group.querySelectorAll('.project-card');
+        let visibleCount = 0;
         
-        if (name.includes(search) || username.includes(search)) {
-            card.style.display = 'block';
-        } else {
-            card.style.display = 'none';
-        }
+        cards.forEach(card => {
+            const name = card.dataset.name.toLowerCase();
+            
+            if (name.includes(search) || username.includes(search)) {
+                card.style.display = 'block';
+                visibleCount++;
+            } else {
+                card.style.display = 'none';
+            }
+        });
+        
+        // Скрываем группу если нет видимых проектов
+        group.style.display = visibleCount > 0 ? 'block' : 'none';
     });
 }
 
