@@ -91,9 +91,10 @@ async def cb_buy(callback: CallbackQuery):
     lines = ["🛒 <b>Аккаунты на продажу</b>\n"]
 
     for i, acc in enumerate(accounts, 1):
-        lines.append(f"<b>Аккаунт {i}</b>")
+        price = acc.get("price", 0)
+        price_str = f"{price:,}₽".replace(",", " ") if price else "договорная"
+        lines.append(f"<b>Аккаунт {i}</b> — <b>{price_str}</b>")
 
-        # Группируем IP по проектам
         for j, proj in enumerate(acc.get("projects", []), 1):
             lines.append(f"  Проект {j}")
             for ip in proj.get("ips", []):
@@ -130,7 +131,9 @@ async def cb_rent(callback: CallbackQuery):
     lines = ["📦 <b>Проекты на аренду</b>\n"]
 
     for i, proj in enumerate(projects, 1):
-        lines.append(f"<b>Проект {i}</b>")
+        price = proj.get("price", 0)
+        price_str = f"{price:,}₽/сут".replace(",", " ") if price else "договорная"
+        lines.append(f"<b>Проект {i}</b> — <b>{price_str}</b>")
         for ip in proj.get("ips", []):
             lines.append(f"  <code>{mask_ip(ip)}</code>")
         lines.append("")
