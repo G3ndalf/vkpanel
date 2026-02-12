@@ -28,7 +28,3 @@ SSH_COMMAND_TIMEOUT = int(os.getenv("SSH_COMMAND_TIMEOUT", "30"))
 
 MAX_SSH_WORKERS = int(os.getenv("MAX_SSH_WORKERS", "10"))
 MAX_CLOUD_WORKERS = int(os.getenv("MAX_CLOUD_WORKERS", "5"))
-
-# ─── API для бота ─────────────────────────────────────────────
-
-BOT_API_KEY = os.getenv("BOT_API_KEY", "vkpanel-bot-key-2026")

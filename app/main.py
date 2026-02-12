@@ -17,7 +17,6 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import (
     ADMIN_USER, ADMIN_PASS, SECRET_KEY,
     BASE_DIR, MAX_SSH_WORKERS, MAX_CLOUD_WORKERS,
-    BOT_API_KEY,
 )
 from .data import (
     load_data, save_data,
@@ -708,8 +707,6 @@ async def projects_page(request: Request):
     # Сортируем аккаунты по количеству IP (больше — выше)
     accounts = sorted(accounts_dict.values(), key=lambda x: -x["total_ips"])
 
-    sales = data.get("sales", {})
-
     return templates.TemplateResponse("projects.html", {
         "request": request,
         "user": user,
@@ -717,7 +714,6 @@ async def projects_page(request: Request):
         "total_projects": len(projects),
         "stats": stats,
         "last_update": projects_last_update,
-        "sales": sales,
     })
 
 
@@ -907,112 +903,6 @@ async def all_ips(request: Request):
         "user": user,
         "ips": all_ips_list,
     })
-
-
-# ─── Продажи аккаунтов ────────────────────────────────────────
-
-def mask_email(email: str) -> str:
-    """Маскировать email: первые 3 символа + *** + @домен."""
-    if "@" not in email:
-        return email[:3] + "***"
-    local, domain = email.split("@", 1)
-    return local[:3] + "***@" + domain
-
-
-def require_bot_api_key(request: Request):
-    """Проверить API ключ бота из заголовка X-API-Key."""
-    key = request.headers.get("X-API-Key")
-    if key != BOT_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid API key")
-
-
-@app.post("/api/sales/{username}/toggle")
-async def api_toggle_sale(request: Request, username: str, for_sale: bool = Form(...), price: int = Form(0)):
-    """Включить/выключить продажу аккаунта."""
-    if not get_current_user(request):
-        raise HTTPException(status_code=401)
-
-    data = load_data()
-    sales = data.get("sales", {})
-
-    if for_sale:
-        sales[username] = {"for_sale": True, "price": price}
-    else:
-        sales.pop(username, None)
-
-    data["sales"] = sales
-    save_data(data)
-    logger.info(f"Sales toggle: {username} for_sale={for_sale} price={price}")
-
-    return JSONResponse({"ok": True, "for_sale": for_sale, "price": price})
-
-
-@app.get("/api/sales")
-async def api_sales(request: Request):
-    """Получить настройки продажи всех аккаунтов."""
-    if not get_current_user(request):
-        raise HTTPException(status_code=401)
-
-    data = load_data()
-    return data.get("sales", {})
-
-
-@app.get("/api/bot/accounts")
-async def api_bot_accounts(request: Request):
-    """
-    API для Telegram бота — список аккаунтов на продаже.
-    Без авторизации панели, проверяет X-API-Key.
-    Аккаунт доступен только если ВСЕ его IP свободны (ни один не attached).
-    """
-    require_bot_api_key(request)
-
-    data = load_data()
-    sales = data.get("sales", {})
-    projects = data.get("projects", [])
-    projects_cache = data.get("projects_cache", {})
-
-    accounts = []
-
-    for username, sale_info in sales.items():
-        if not sale_info.get("for_sale"):
-            continue
-
-        # Собираем все проекты этого аккаунта
-        user_projects = [p for p in projects if p["username"] == username]
-        if not user_projects:
-            continue
-
-        # Собираем все IP
-        all_ips = []
-        has_attached = False
-
-        for proj in user_projects:
-            cached = projects_cache.get(proj["name"], {})
-            for ip in cached.get("ips", []):
-                all_ips.append(ip.get("ip"))
-                if ip.get("attached"):
-                    has_attached = True
-
-        # Пропускаем аккаунт если хоть один IP привязан к VM
-        if has_attached:
-            continue
-
-        # Пропускаем если нет IP
-        if not all_ips:
-            continue
-
-        accounts.append({
-            "username_masked": mask_email(username),
-            "total_ips": len(all_ips),
-            "ips": all_ips,
-            "price": sale_info.get("price", 0),
-            "projects_count": len(user_projects),
-        })
-
-    # Сортируем по количеству IP (больше — выше)
-    accounts.sort(key=lambda x: -x["total_ips"])
-
-    return {"accounts": accounts}
 
 
 if __name__ == "__main__":
