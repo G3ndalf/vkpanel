@@ -94,11 +94,11 @@
             <span class="badge badge-green">{{ account_attached|length }} привязано</span>
             <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b;">{{ account_free|length }} свободно</span>
             {% if sales.get(account.username) %}
-            <button class="btn btn-sm" style="background: rgba(16,185,129,0.2); color: #10b981;" onclick="openSaleModal('{{ account.username }}', true, {{ sales[account.username].price }})" title="На продаже — {{ sales[account.username].price }}₽">
+            <button class="btn btn-sm" style="background: rgba(16,185,129,0.2); color: #10b981;" onclick="openSaleModal('{{ account.username }}', true, {{ sales[account.username].price }}, {{ account.total_ips }})" title="На продаже — {{ sales[account.username].price }}₽">
                 💰 {{ sales[account.username].price }}₽
             </button>
             {% else %}
-            <button class="btn btn-sm" style="background: rgba(100,116,139,0.2); color: #94a3b8;" onclick="openSaleModal('{{ account.username }}', false, 0)" title="Выставить на продажу">
+            <button class="btn btn-sm" style="background: rgba(100,116,139,0.2); color: #94a3b8;" onclick="openSaleModal('{{ account.username }}', false, 30000, {{ account.total_ips }})" title="Выставить на продажу">
                 🏷 Продать
             </button>
             {% endif %}
@@ -266,9 +266,11 @@
             <form onsubmit="submitSale(event)">
                 <input type="hidden" id="sale-username-input">
                 <input type="hidden" id="sale-for-sale">
+                <input type="hidden" id="sale-price" value="0">
                 <div class="form-group" id="sale-price-group">
-                    <label>Цена (₽)</label>
-                    <input type="number" id="sale-price" min="0" step="100" value="0" style="font-size: 1.2rem;">
+                    <label>Цена за 1 IP (₽)</label>
+                    <input type="number" id="sale-price-per-ip" min="0" step="1000" value="30000" style="font-size: 1.2rem;" oninput="updateSaleTotal()">
+                    <div id="sale-total" style="margin-top: 0.5rem; font-size: 1.1rem; color: #10b981; font-weight: 600;"></div>
                 </div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                     <button type="button" class="btn btn-secondary" onclick="closeSaleModal()">Отмена</button>
@@ -578,27 +580,36 @@ async function stopScript(serverId, scriptId, label, btn) {
 }
 
 // ─── Модалка продажи ──────────────────────────
-function openSaleModal(username, forSale, price) {
+let currentSaleIpCount = 0;
+
+function openSaleModal(username, forSale, pricePerIp, ipCount) {
+    currentSaleIpCount = ipCount || 0;
     document.getElementById('sale-username').textContent = username;
     document.getElementById('sale-username-input').value = username;
-    document.getElementById('sale-for-sale').checked = !forSale;  // toggle
-    document.getElementById('sale-price').value = price || 0;
     document.getElementById('sale-modal').classList.add('active');
     
-    // Если уже на продаже — показываем "Снять с продажи", иначе "Выставить"
     const btn = document.getElementById('sale-submit-btn');
     if (forSale) {
         btn.textContent = '❌ Снять с продажи';
         btn.className = 'btn btn-danger';
-        document.getElementById('sale-for-sale').checked = false;
+        document.getElementById('sale-for-sale').value = 'false';
         document.getElementById('sale-price-group').style.display = 'none';
     } else {
         btn.textContent = '💰 Выставить на продажу';
         btn.className = 'btn btn-primary';
-        document.getElementById('sale-for-sale').checked = true;
+        document.getElementById('sale-for-sale').value = 'true';
         document.getElementById('sale-price-group').style.display = 'block';
-        document.getElementById('sale-price').focus();
+        document.getElementById('sale-price-per-ip').value = pricePerIp || 30000;
+        updateSaleTotal();
+        document.getElementById('sale-price-per-ip').focus();
     }
+}
+
+function updateSaleTotal() {
+    const perIp = parseInt(document.getElementById('sale-price-per-ip').value) || 0;
+    const total = perIp * currentSaleIpCount;
+    document.getElementById('sale-total').textContent = `${currentSaleIpCount} IP × ${perIp.toLocaleString('ru')}₽ = ${total.toLocaleString('ru')}₽`;
+    document.getElementById('sale-price').value = total;
 }
 
 function closeSaleModal() {
@@ -608,7 +619,7 @@ function closeSaleModal() {
 async function submitSale(event) {
     event.preventDefault();
     const username = document.getElementById('sale-username-input').value;
-    const forSale = document.getElementById('sale-for-sale').checked;
+    const forSale = document.getElementById('sale-for-sale').value === 'true';
     const price = parseInt(document.getElementById('sale-price').value) || 0;
     
     const formData = new FormData();
