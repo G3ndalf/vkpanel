@@ -24,10 +24,10 @@ SELLERS = "@xlmmama @haxonate"
 
 
 def mask_ip(ip: str) -> str:
-    """Маскировка последнего октета IP: 5.188.203.45 → 5.188.203.***"""
-    parts = ip.rsplit(".", 1)
-    if len(parts) == 2:
-        return parts[0] + ".***"
+    """Маскировка IP: 5.188.203.45 → 5.188.***.***"""
+    parts = ip.split(".")
+    if len(parts) == 4:
+        return f"{parts[0]}.{parts[1]}.***.***"
     return ip
 
 
