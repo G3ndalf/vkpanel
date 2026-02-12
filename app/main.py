@@ -23,7 +23,7 @@ from .data import (
     get_server_by_id, get_script_by_id,
     update_status_cache, get_cached_status, get_cached_cloud,
 )
-from .ssh import get_script_status, control_script, get_floating_ips_via_cli, change_script_project
+from .ssh import get_script_status, control_script, get_floating_ips_via_cli, change_script_project, ssh_connect, ssh_exec
 from .openstack import get_project_floating_ips
 
 # ─── Логирование ──────────────────────────────────────────────
@@ -134,10 +134,14 @@ async def dashboard(request: Request):
                 "status": combined,
             })
 
+    # Список серверов для JS-фильтрации
+    server_names = sorted(set(s["name"] for s in servers))
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "user": user,
         "servers": servers,
+        "server_names": server_names,
         "scripts_info": scripts_info,
         "total_scripts": total_scripts,
         "running_scripts": running_scripts,
@@ -415,6 +419,12 @@ async def api_change_project(request: Request, server_id: int, script_id: int, p
     if not project:
         return JSONResponse({"ok": False, "error": f"Project '{project_name}' not found"}, status_code=404)
 
+    # Подставляем os_project_name из кэша (реальное имя в VK Cloud)
+    projects_cache = data.get("projects_cache", {})
+    os_pname = projects_cache.get(project["name"], {}).get("os_project_name")
+    if os_pname:
+        project = {**project, "os_project_name": os_pname}
+
     # Меняем проект
     success, msg = change_script_project(server, script, project)
 
@@ -487,7 +497,7 @@ async def api_refresh_status(request: Request):
         status_cache[cache_key] = r
 
     data["status_cache"] = status_cache
-    data["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["last_update"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     save_data(data)
 
     running = sum(1 for r in results if r.get("running"))
@@ -618,7 +628,7 @@ async def api_cloud_refresh(request: Request):
         cloud_cache[r["key"]] = r["data"]
 
     data["cloud_cache"] = cloud_cache
-    data["cloud_last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["cloud_last_update"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     save_data(data)
 
     # Считаем статистику
@@ -674,16 +684,76 @@ async def projects_page(request: Request):
     projects_cache = data.get("projects_cache", {})
     projects_last_update = data.get("projects_last_update")
 
+    # Строим маппинг: project_name -> список скриптов из status_cache
+    status_cache = data.get("status_cache", {})
+    servers = data.get("servers", [])
+    project_scripts_map: dict[str, list[dict]] = {}
+    for cache_key, cached_status in status_cache.items():
+        proj_name = cached_status.get("project")
+        if proj_name:
+            if proj_name not in project_scripts_map:
+                project_scripts_map[proj_name] = []
+            # Парсим server_id и script_id из cache_key "1-2"
+            parts = cache_key.split("-")
+            server_id = int(parts[0]) if len(parts) == 2 else 0
+            script_id = int(parts[1]) if len(parts) == 2 else 0
+            project_scripts_map[proj_name].append({
+                "server_id": server_id,
+                "script_id": script_id,
+                "server_name": cached_status.get("server_name", "?"),
+                "script_name": cached_status.get("script_name", "?"),
+                "running": cached_status.get("running", False),
+                "cycles": cached_status.get("cycles", 0),
+                "success": cached_status.get("success", 0),
+                "last_ip": cached_status.get("last_ip"),
+                "error": cached_status.get("error"),
+            })
+
+    # Собираем полную карту серверов → скриптов с текущими статусами (для модалки выбора)
+    servers_scripts_info = []
+    for server in servers:
+        srv_info = {
+            "id": server["id"],
+            "name": server["name"],
+            "scripts": [],
+        }
+        for script in server.get("scripts", []):
+            ck = f"{server['id']}-{script['id']}"
+            cached = status_cache.get(ck, {})
+            srv_info["scripts"].append({
+                "id": script["id"],
+                "name": script["name"],
+                "running": cached.get("running", False),
+                "project": cached.get("project", "—"),
+                "account": cached.get("account", "—"),
+                "cycles": cached.get("cycles", 0),
+                "success": cached.get("success", 0),
+            })
+        servers_scripts_info.append(srv_info)
+
     # Группируем проекты по аккаунту
     accounts_dict = {}
     stats = {"total": 0, "attached": 0, "free": 0}
+    scripts_active = 0
+    scripts_total = 0
 
     for proj in projects:
         cached = projects_cache.get(proj["name"], {})
+        # Маппинг через os_project_name (реальное имя из VK Cloud)
+        os_pname = cached.get("os_project_name") or ""
+        scripts_for_proj = project_scripts_map.get(os_pname, [])
+        # Фоллбэк: если os_project_name ещё не загружен, пробуем по name
+        if not scripts_for_proj:
+            scripts_for_proj = project_scripts_map.get(proj["name"], [])
+        scripts_total += len(scripts_for_proj)
+        scripts_active += sum(1 for s in scripts_for_proj if s["running"])
+
         proj_data = {
             "name": proj["name"],
+            "os_project_name": cached.get("os_project_name"),
             "ips": cached.get("ips", []),
             "error": cached.get("error"),
+            "scripts": scripts_for_proj,
         }
 
         username = proj["username"]
@@ -707,12 +777,22 @@ async def projects_page(request: Request):
     # Сортируем аккаунты по количеству IP (больше — выше)
     accounts = sorted(accounts_dict.values(), key=lambda x: -x["total_ips"])
 
+    # Маппинг IP -> арендатор
+    ip_tenant_map = {}
+    for t in data.get("tenants", []):
+        for ip_addr in t.get("ips", []):
+            ip_tenant_map[ip_addr] = t["name"]
+
     return templates.TemplateResponse("projects.html", {
         "request": request,
         "user": user,
         "accounts": accounts,
         "total_projects": len(projects),
         "stats": stats,
+        "scripts_active": scripts_active,
+        "scripts_total": scripts_total,
+        "servers_scripts": servers_scripts_info,
+        "ip_tenant_map": ip_tenant_map,
         "last_update": projects_last_update,
     })
 
@@ -744,6 +824,7 @@ async def api_projects_refresh(request: Request):
         projects_cache[r["name"]] = {
             "ips": r["ips"],
             "error": r["error"],
+            "os_project_name": r.get("os_project_name"),
         }
         for ip in r["ips"]:
             stats["total"] += 1
@@ -753,7 +834,7 @@ async def api_projects_refresh(request: Request):
                 stats["free"] += 1
 
     data["projects_cache"] = projects_cache
-    data["projects_last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["projects_last_update"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     save_data(data)
 
     logger.info(f"Projects refresh: {stats['total']} IPs")
@@ -841,6 +922,32 @@ async def api_add_project(
     })
 
 
+@app.post("/api/accounts/{username}/delete")
+async def api_delete_account(request: Request, username: str):
+    """Удалить все проекты аккаунта."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    projects = data.get("projects", [])
+
+    # Находим проекты этого аккаунта
+    account_projects = [p for p in projects if p["username"] == username]
+    if not account_projects:
+        return JSONResponse({"ok": False, "error": "Аккаунт не найден"}, status_code=404)
+
+    # Удаляем проекты и их кэш
+    project_names = [p["name"] for p in account_projects]
+    data["projects"] = [p for p in projects if p["username"] != username]
+    for name in project_names:
+        data.get("projects_cache", {}).pop(name, None)
+
+    save_data(data)
+    logger.info(f"Account deleted: {username} ({len(account_projects)} projects)")
+
+    return JSONResponse({"ok": True, "message": f"Удалено {len(account_projects)} проектов аккаунта '{username}'"})
+
+
 @app.post("/api/projects/{project_name}/delete")
 async def api_delete_project(request: Request, project_name: str):
     """Удалить проект."""
@@ -870,18 +977,23 @@ async def api_delete_project(request: Request, project_name: str):
 
 @app.get("/ips", response_class=HTMLResponse)
 async def all_ips(request: Request):
+    """Страница всех пойманных IP — данные из кэша, без live SSH."""
     user = get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
 
     data = load_data()
     all_ips_list = []
+    status_cache = data.get("status_cache", {})
 
+    # Берём allocated IP из кэша статусов (state файлы)
     for server in data.get("servers", []):
         for script in server.get("scripts", []):
-            status = get_script_status(server, script)
-            if status["state"]:
-                allocated = status["state"].get("allocated", {})
+            cache_key = f"{server['id']}-{script['id']}"
+            cached = status_cache.get(cache_key, {})
+            state = cached.get("state", {})
+            if state:
+                allocated = state.get("allocated", {})
                 for subnet, ips in allocated.items():
                     for ip_info in ips:
                         all_ips_list.append({
@@ -891,8 +1003,8 @@ async def all_ips(request: Request):
                             "subnet": subnet,
                             "server": server["name"],
                             "script": script["name"],
-                            "account": script.get("account_name", "-"),
-                            "project": script.get("project_name", "-"),
+                            "account": cached.get("account") or script.get("account_name", "-"),
+                            "project": cached.get("project") or script.get("project_name", "-"),
                         })
 
     # Сортируем по дате (новые первые)
@@ -902,9 +1014,312 @@ async def all_ips(request: Request):
         "request": request,
         "user": user,
         "ips": all_ips_list,
+        "last_update": data.get("last_update"),
     })
+
+
+# ─── Арендаторы ───────────────────────────────────────────────
+
+@app.get("/tenants", response_class=HTMLResponse)
+async def tenants_page(request: Request):
+    """Страница арендаторов."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    data = load_data()
+    tenants = data.get("tenants", [])
+    projects_cache = data.get("projects_cache", {})
+    projects = {p["name"]: p for p in data.get("projects", [])}
+
+    # Строим маппинг ip -> {project, account, attached, server_name}
+    ip_info_map = {}
+    for proj_name, cached in projects_cache.items():
+        proj = projects.get(proj_name, {})
+        for ip in cached.get("ips", []):
+            ip_addr = ip.get("ip")
+            if ip_addr:
+                ip_info_map[ip_addr] = {
+                    "project": cached.get("os_project_name") or proj_name,
+                    "project_key": proj_name,
+                    "account": proj.get("username", "—"),
+                    "attached": ip.get("attached", False),
+                    "server_name": ip.get("server_name"),
+                }
+
+    # Обогащаем данные арендаторов
+    tenants_enriched = []
+    for t in tenants:
+        ips_enriched = []
+        for ip_addr in t.get("ips", []):
+            info = ip_info_map.get(ip_addr, {})
+            ips_enriched.append({
+                "ip": ip_addr,
+                "project": info.get("project", "—"),
+                "account": info.get("account", "—"),
+                "attached": info.get("attached", False),
+                "server_name": info.get("server_name"),
+            })
+        tenants_enriched.append({
+            "name": t["name"],
+            "ips": ips_enriched,
+        })
+
+    # Собираем все IP для выбора (свободные от арендаторов)
+    rented_ips = set()
+    for t in tenants:
+        rented_ips.update(t.get("ips", []))
+
+    all_available_ips = []
+    for ip_addr, info in sorted(ip_info_map.items()):
+        all_available_ips.append({
+            "ip": ip_addr,
+            "project": info.get("project", "—"),
+            "account": info.get("account", "—"),
+            "rented_by": None,
+        })
+    # Отмечаем кто арендует
+    for t in tenants:
+        for ip_addr in t.get("ips", []):
+            for aip in all_available_ips:
+                if aip["ip"] == ip_addr:
+                    aip["rented_by"] = t["name"]
+
+    return templates.TemplateResponse("tenants.html", {
+        "request": request,
+        "user": user,
+        "tenants": tenants_enriched,
+        "all_ips": all_available_ips,
+        "total_ips": len(ip_info_map),
+        "rented_count": len(rented_ips),
+    })
+
+
+@app.post("/api/tenants/add")
+async def api_add_tenant(request: Request, name: str = Form(...)):
+    """Создать арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    tenants = data.setdefault("tenants", [])
+
+    if any(t["name"] == name for t in tenants):
+        return JSONResponse({"ok": False, "error": f"Арендатор '{name}' уже существует"}, status_code=400)
+
+    tenants.append({"name": name, "ips": []})
+    save_data(data)
+    logger.info(f"Tenant added: {name}")
+    return JSONResponse({"ok": True, "message": f"Арендатор '{name}' создан"})
+
+
+@app.post("/api/tenants/{tenant_name}/delete")
+async def api_delete_tenant(request: Request, tenant_name: str):
+    """Удалить арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    tenants = data.get("tenants", [])
+    if not any(t["name"] == tenant_name for t in tenants):
+        return JSONResponse({"ok": False, "error": "Арендатор не найден"}, status_code=404)
+
+    data["tenants"] = [t for t in tenants if t["name"] != tenant_name]
+    save_data(data)
+    logger.info(f"Tenant deleted: {tenant_name}")
+    return JSONResponse({"ok": True, "message": f"Арендатор '{tenant_name}' удалён"})
+
+
+@app.post("/api/tenants/{tenant_name}/assign-ip")
+async def api_assign_ip(request: Request, tenant_name: str, ip: str = Form(...)):
+    """Привязать IP к арендатору."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    tenants = data.get("tenants", [])
+    tenant = next((t for t in tenants if t["name"] == tenant_name), None)
+    if not tenant:
+        return JSONResponse({"ok": False, "error": "Арендатор не найден"}, status_code=404)
+
+    # Проверяем что IP не занят другим арендатором
+    for t in tenants:
+        if ip in t.get("ips", []) and t["name"] != tenant_name:
+            return JSONResponse({"ok": False, "error": f"IP {ip} уже у арендатора '{t['name']}'"}, status_code=400)
+
+    if ip not in tenant.get("ips", []):
+        tenant.setdefault("ips", []).append(ip)
+        save_data(data)
+
+    logger.info(f"IP {ip} assigned to tenant {tenant_name}")
+    return JSONResponse({"ok": True, "message": f"IP {ip} привязан к '{tenant_name}'"})
+
+
+@app.post("/api/tenants/{tenant_name}/unassign-ip")
+async def api_unassign_ip(request: Request, tenant_name: str, ip: str = Form(...)):
+    """Отвязать IP от арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    tenant = next((t for t in data.get("tenants", []) if t["name"] == tenant_name), None)
+    if not tenant:
+        return JSONResponse({"ok": False, "error": "Арендатор не найден"}, status_code=404)
+
+    if ip in tenant.get("ips", []):
+        tenant["ips"].remove(ip)
+        save_data(data)
+
+    logger.info(f"IP {ip} unassigned from tenant {tenant_name}")
+    return JSONResponse({"ok": True, "message": f"IP {ip} отвязан от '{tenant_name}'"})
+
+
+# ─── Логи ─────────────────────────────────────────────────────
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_page(request: Request):
+    """Страница логов скриптов."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    data = load_data()
+    servers = data.get("servers", [])
+    status_cache = data.get("status_cache", {})
+
+    servers_info = []
+    for server in servers:
+        srv = {"id": server["id"], "name": server["name"], "scripts": []}
+        for script in server.get("scripts", []):
+            ck = f"{server['id']}-{script['id']}"
+            cached = status_cache.get(ck, {})
+            srv["scripts"].append({
+                "id": script["id"],
+                "name": script["name"],
+                "service_name": script.get("service_name", ""),
+                "running": cached.get("running", False),
+                "project": cached.get("project", "—"),
+            })
+        servers_info.append(srv)
+
+    logs_cache = data.get("logs_cache", {})
+
+    return templates.TemplateResponse("logs.html", {
+        "request": request,
+        "user": user,
+        "servers": servers_info,
+        "logs_cache": logs_cache,
+    })
+
+
+@app.get("/api/logs/{server_id}/{script_id}")
+async def api_get_logs(request: Request, server_id: int, script_id: int, lines: int = 10):
+    """Получить логи скрипта через SSH + journalctl."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    if lines > 200:
+        lines = 200
+
+    data = load_data()
+    server = get_server_by_id(data, server_id)
+    if not server:
+        return JSONResponse({"ok": False, "error": "Сервер не найден"}, status_code=404)
+
+    script = get_script_by_id(server, script_id)
+    if not script:
+        return JSONResponse({"ok": False, "error": "Скрипт не найден"}, status_code=404)
+
+    service_name = script.get("service_name", f"vk-fip@{script['name']}")
+
+    try:
+        client = ssh_connect(
+            server["host"], server.get("port", 22),
+            server["user"], server.get("password"), server.get("key_path"),
+        )
+        code, out, err = ssh_exec(client, f"journalctl -u {service_name} -n {lines} --no-pager 2>&1")
+        client.close()
+
+        log_text = out.strip() if code == 0 else (err.strip() or out.strip())
+
+        # Сохраняем в кэш
+        data.setdefault("logs_cache", {})[f"{server_id}-{script_id}"] = {
+            "log": log_text,
+            "time": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        save_data(data)
+
+        return JSONResponse({
+            "ok": True,
+            "server": server["name"],
+            "script": script["name"],
+            "lines": lines,
+            "log": log_text,
+        })
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)[:200]}, status_code=500)
+
+
+@app.post("/api/logs/all")
+async def api_get_all_logs(request: Request, lines: int = Form(10)):
+    """Получить логи со всех скриптов параллельно."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    if lines > 200:
+        lines = 200
+
+    data = load_data()
+    tasks = []
+    for server in data.get("servers", []):
+        for script in server.get("scripts", []):
+            tasks.append((server, script))
+
+    def fetch_log(args):
+        server, script = args
+        service_name = script.get("service_name", f"vk-fip@{script['name']}")
+        try:
+            client = ssh_connect(
+                server["host"], server.get("port", 22),
+                server["user"], server.get("password"), server.get("key_path"),
+            )
+            code, out, err = ssh_exec(client, f"journalctl -u {service_name} -n {lines} --no-pager 2>&1")
+            client.close()
+            return {
+                "server_id": server["id"],
+                "script_id": script["id"],
+                "server": server["name"],
+                "script": script["name"],
+                "log": out.strip() if code == 0 else (err.strip() or out.strip()),
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "server_id": server["id"],
+                "script_id": script["id"],
+                "server": server["name"],
+                "script": script["name"],
+                "log": "",
+                "error": str(e)[:200],
+            }
+
+    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
+        results = list(executor.map(fetch_log, tasks))
+
+    # Сохраняем в кэш
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    logs_cache = data.setdefault("logs_cache", {})
+    for r in results:
+        if r["log"] or not r.get("error"):
+            logs_cache[f"{r['server_id']}-{r['script_id']}"] = {
+                "log": r["log"],
+                "time": now,
+            }
+    save_data(data)
+
+    return JSONResponse({"ok": True, "results": results, "lines": lines})
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8080)

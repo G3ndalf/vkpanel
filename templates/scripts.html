@@ -3,9 +3,12 @@
 {% block title %}Скрипты {{ server.name }} — VK IP Panel{% endblock %}
 
 {% block content %}
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.75rem;">
     <h1>📜 Скрипты: {{ server.name }}</h1>
-    <a href="/servers" class="btn btn-secondary">← Назад к серверам</a>
+    <div style="display: flex; gap: 0.5rem;">
+        <button class="btn btn-primary" onclick="refreshScripts()">🔄 Обновить</button>
+        <a href="/servers" class="btn btn-secondary">← Назад к серверам</a>
+    </div>
 </div>
 
 <!-- Форма добавления скрипта -->
@@ -45,6 +48,7 @@
     <h2>📋 Скрипты на сервере</h2>
     
     {% if scripts %}
+    <div class="table-responsive">
     <table>
         <thead>
             <tr>
@@ -101,6 +105,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <div class="empty">
         <p>Скриптов на этом сервере пока нет. Добавьте первый скрипт выше.</p>
@@ -111,7 +116,8 @@
 
 {% block scripts %}
 <script>
-// Автообновление каждые 30 секунд
-setTimeout(() => location.reload(), 30000);
+function refreshScripts() {
+    location.reload();
+}
 </script>
 {% endblock %}

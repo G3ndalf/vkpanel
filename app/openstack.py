@@ -14,11 +14,11 @@ def openstack_auth(
     username: str,
     password: str,
     project_id: str,
-) -> tuple[str, dict]:
+) -> tuple[str, dict, str]:
     """
     Получить токен OpenStack через Keystone.
     
-    Возвращает (token, endpoints_dict).
+    Возвращает (token, endpoints_dict, project_name).
     """
     auth_payload = {
         "auth": {
@@ -55,7 +55,10 @@ def openstack_auth(
                 if ep.get("interface") == "public" and ep.get("region") == "RegionOne":
                     endpoints[stype] = ep.get("url")
 
-        return token, endpoints
+        # Имя проекта из ответа Keystone
+        project_name = resp.json().get("token", {}).get("project", {}).get("name", "")
+
+        return token, endpoints, project_name
 
 
 def openstack_get_floating_ips(token: str, network_endpoint: str) -> list[dict]:
@@ -91,17 +94,20 @@ def get_project_floating_ips(project: dict) -> dict:
     result = {
         "name": project["name"],
         "username": project["username"],
+        "os_project_name": None,
         "ips": [],
         "error": None,
     }
 
     try:
-        token, endpoints = openstack_auth(
+        token, endpoints, os_project_name = openstack_auth(
             project["auth_url"],
             project["username"],
             project["password"],
             project["project_id"],
         )
+
+        result["os_project_name"] = os_project_name
 
         network_ep = endpoints.get("network")
         compute_ep = endpoints.get("compute")

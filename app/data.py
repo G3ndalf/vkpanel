@@ -1,6 +1,8 @@
 """
 Работа с данными (JSON-файл).
+Файловая блокировка для безопасной параллельной записи.
 """
+import fcntl
 import json
 import logging
 import os
@@ -18,7 +20,7 @@ def load_data() -> dict:
         try:
             with open(DATA_FILE, "r") as f:
                 data = json.load(f)
-                # Ensure required keys exist
+                # Обязательные ключи
                 data.setdefault("servers", [])
                 data.setdefault("accounts", [])
                 data.setdefault("projects", [])
@@ -28,7 +30,6 @@ def load_data() -> dict:
                 data.setdefault("last_update", None)
                 data.setdefault("cloud_last_update", None)
                 data.setdefault("projects_last_update", None)
-                data.setdefault("sales", {})
                 return data
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse {DATA_FILE}: {e}")
@@ -45,16 +46,20 @@ def load_data() -> dict:
         "last_update": None,
         "cloud_last_update": None,
         "projects_last_update": None,
-        "sales": {},
     }
 
 
 def save_data(data: dict) -> bool:
-    """Сохранить данные в JSON файл."""
+    """Сохранить данные в JSON файл с файловой блокировкой (fcntl.flock)."""
     try:
         os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
         with open(DATA_FILE, "w") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            # Эксклюзивная блокировка для предотвращения race condition
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         return True
     except Exception as e:
         logger.error(f"Failed to save {DATA_FILE}: {e}")

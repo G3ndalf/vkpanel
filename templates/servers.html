@@ -543,33 +543,6 @@
 
 {% block scripts %}
 <script>
-function timeAgo(dateStr) {
-    if (!dateStr) return 'Ещё не обновлялось';
-    
-    const date = new Date(dateStr.replace(' ', 'T'));
-    const now = new Date();
-    const seconds = Math.floor((now - date) / 1000);
-    
-    if (seconds < 0) return 'только что';
-    if (seconds < 60) return 'только что';
-    if (seconds < 120) return '1 мин назад';
-    if (seconds < 3600) return Math.floor(seconds / 60) + ' мин назад';
-    if (seconds < 7200) return '1 час назад';
-    if (seconds < 86400) return Math.floor(seconds / 3600) + ' ч назад';
-    return Math.floor(seconds / 86400) + ' дн назад';
-}
-
-function updateTimeAgo() {
-    const el = document.getElementById('last-update');
-    const time = el.dataset.time;
-    if (time) {
-        el.textContent = 'Обновлено: ' + timeAgo(time);
-    }
-}
-
-updateTimeAgo();
-setInterval(updateTimeAgo, 60000);
-
 function toggleServer(serverId) {
     const scripts = document.getElementById(`scripts-${serverId}`);
     const arrow = document.getElementById(`arrow-${serverId}`);

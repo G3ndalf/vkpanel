@@ -3,6 +3,10 @@
 {% block title %}VK Cloud IP — VK IP Panel{% endblock %}
 
 {% block content %}
+<div class="deprecation-banner">
+    ⚠️ Эта страница устарела. Используйте <a href="/projects">📁 Проекты</a> для управления IP.
+</div>
+
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
     <h1>☁️ Floating IP из VK Cloud</h1>
     <div style="display: flex; align-items: center; gap: 1rem;">
@@ -38,6 +42,7 @@
     <h2>📋 Все Floating IP ({{ all_ips|length }})</h2>
     
     {% if all_ips %}
+    <div class="table-responsive">
     <table>
         <thead>
             <tr>
@@ -66,6 +71,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
     <div class="empty">
         <p>Нет данных</p>
@@ -77,62 +83,25 @@
 
 {% block scripts %}
 <script>
-function timeAgo(dateStr) {
-    if (!dateStr) return 'Ещё не обновлялось';
-    
-    const date = new Date(dateStr.replace(' ', 'T') + 'Z');
-    const now = new Date();
-    const seconds = Math.floor((now - date) / 1000);
-    
-    if (seconds < 60) return 'только что';
-    if (seconds < 120) return '1 мин назад';
-    if (seconds < 3600) return Math.floor(seconds / 60) + ' мин назад';
-    if (seconds < 7200) return '1 час назад';
-    if (seconds < 86400) return Math.floor(seconds / 3600) + ' ч назад';
-    if (seconds < 172800) return '1 день назад';
-    return Math.floor(seconds / 86400) + ' дн назад';
-}
-
-function updateTimeAgo() {
-    const el = document.getElementById('last-update');
-    const time = el.dataset.time;
-    if (time) {
-        el.textContent = 'Обновлено: ' + timeAgo(time);
-    }
-}
-
-updateTimeAgo();
-setInterval(updateTimeAgo, 60000);
-
 async function refreshCloud() {
     const btn = document.getElementById('refresh-btn');
-    const lastUpdate = document.getElementById('last-update');
-    
     btn.disabled = true;
     btn.textContent = '⏳ Загрузка...';
-    lastUpdate.textContent = 'Загрузка данных из VK Cloud...';
     
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 минут таймаут
-        
-        const res = await fetch('/api/cloud/refresh', { 
-            method: 'POST',
-            signal: controller.signal,
-            credentials: 'same-origin'
-        });
-        clearTimeout(timeoutId);
+        const res = await fetch('/api/cloud/refresh', { method: 'POST', credentials: 'same-origin' });
         const data = await res.json();
         
         if (data.ok) {
-            lastUpdate.dataset.time = data.last_update;
+            const el = document.getElementById('last-update');
+            el.dataset.time = data.last_update;
             updateTimeAgo();
             location.reload();
         } else {
-            lastUpdate.textContent = 'Ошибка обновления';
+            showToast('Ошибка обновления', 'error');
         }
     } catch (e) {
-        lastUpdate.textContent = 'Ошибка: ' + e.message;
+        showToast('Ошибка: ' + e.message, 'error');
     }
     
     btn.disabled = false;

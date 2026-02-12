@@ -297,7 +297,7 @@ def change_script_project(server: dict, script: dict, project: dict) -> tuple[bo
             "OS_USERNAME": project["username"],
             "OS_PASSWORD": project["password"],
             "OS_PROJECT_ID": project["project_id"],
-            "OS_PROJECT_NAME": project["name"],
+            "OS_PROJECT_NAME": project.get("os_project_name") or project["name"],
         }
         
         # Если есть auth_url, обновляем и его

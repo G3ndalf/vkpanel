@@ -3,14 +3,15 @@
 {% block title %}Проекты — VK IP Panel{% endblock %}
 
 {% block content %}
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.75rem;">
     <h1>📁 Проекты VK Cloud</h1>
-    <div style="display: flex; align-items: center; gap: 1rem;">
-        <span id="last-update" style="color: #64748b; font-size: 0.9rem;">
+    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <span id="last-update" style="color: #64748b; font-size: 0.9rem;" data-time="{{ last_update or '' }}">
             {% if last_update %}
-            Обновлено: {{ last_update }}
+            Обновлено: ...
             {% else %}
             Ещё не обновлялось
+            {% endif %}
         </span>
         <button class="btn btn-secondary" onclick="openAddModal()">
             ➕ Добавить проект
@@ -64,6 +65,10 @@
         <div class="label">Привязано к ВМ</div>
         <div class="value" style="color: #10b981;">{{ stats.attached }}</div>
     </div>
+    <div class="stat-card">
+        <div class="label">Скриптов работает</div>
+        <div class="value" style="color: #10b981;">{{ scripts_active }} <span style="font-size: 1rem; color: #64748b;">/ {{ scripts_total }}</span></div>
+    </div>
 </div>
 
 {% for account in accounts %}
@@ -80,17 +85,21 @@
 {% endfor %}
 
 <div class="card" style="margin-bottom: 1.5rem;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #334155;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #334155; flex-wrap: wrap; gap: 0.5rem;">
         <h2 style="margin: 0;">
             👤 {{ account.username }}
         </h2>
-        <div style="display: flex; gap: 0.75rem; align-items: center;">
+        <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
             <span style="color: #94a3b8; font-size: 0.9rem;">{{ account.total_ips }} IP:</span>
             <span class="badge badge-green">{{ account_attached|length }} привязано</span>
             <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b;">{{ account_free|length }} свободно</span>
+            <button class="btn btn-danger btn-sm" onclick="deleteAccount('{{ account.username }}')" title="Удалить все проекты аккаунта">
+                🗑 Удалить аккаунт
+            </button>
         </div>
     </div>
     
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
     {% for project in account.projects %}
     {% set proj_attached = [] %}
     {% set proj_free = [] %}
@@ -102,37 +111,76 @@
         {% endif %}
     {% endfor %}
     
-    <div style="margin-bottom: 1rem; padding: 1rem; background: rgba(0,0,0,0.2); border-radius: 8px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+    <div style="padding: 0.75rem; background: rgba(0,0,0,0.2); border-radius: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.4rem;">
             <div>
-                <span style="font-weight: 600; color: #f59e0b;">📦 {{ project.name }}</span>
+                <span style="font-weight: 600; color: #f59e0b;">📦 {{ project.os_project_name or project.name }}</span>
+                {% if project.os_project_name and project.os_project_name != project.name %}
+                <span style="font-size: 0.7rem; color: #64748b; margin-left: 0.3rem;">({{ project.name }})</span>
+                {% endif %}
             </div>
-            <div style="display: flex; gap: 0.5rem;">
+            <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
                 {% if project.error %}
                 <span class="badge badge-red">{{ project.error[:30] }}</span>
                 {% else %}
                 <span class="badge badge-green" style="font-size: 0.75rem;">{{ proj_attached|length }} 📌</span>
                 <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b; font-size: 0.75rem;">{{ proj_free|length }} 🆓</span>
                 {% endif %}
+                
+                {# Кнопки управления скриптами #}
+                {% set has_running = project.scripts | selectattr('running') | list %}
+                {% if has_running %}
+                    {% for s in has_running %}
+                    <button class="btn btn-danger btn-sm" onclick="stopScript({{ s.server_id }}, {{ s.script_id }}, '{{ s.server_name }}/{{ s.script_name }}', this)" title="Остановить {{ s.server_name }}/{{ s.script_name }}">
+                        ⏹ Стоп {{ s.script_name }}
+                    </button>
+                    {% endfor %}
+                {% endif %}
+                {% if not has_running %}
+                <button class="btn btn-primary btn-sm" onclick="openScriptModal('{{ project.name }}')" title="Запустить скрипт на этом проекте">
+                    ▶ Запустить
+                </button>
+                {% endif %}
+                
+                <button class="btn btn-danger btn-sm" onclick="deleteProject('{{ project.name }}')" title="Удалить проект" style="opacity: 0.6;">✕</button>
             </div>
         </div>
         
+        {# Привязанные скрипты #}
+        {% if project.scripts %}
+        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem;">
+            {% for s in project.scripts %}
+            <div style="display: flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.6rem; border-radius: 6px; font-size: 0.75rem;
+                {% if s.running %}background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3);
+                {% else %}background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3);{% endif %}">
+                <span style="color: {% if s.running %}#10b981{% else %}#ef4444{% endif %};">●</span>
+                <span style="color: #e2e8f0;">{{ s.server_name }}/{{ s.script_name }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {# Floating IPs #}
         {% if project.ips %}
         <div class="ip-grid">
             {% for ip in project.ips %}
             <div class="ip-item {{ 'attached' if ip.attached else 'free' }}">
                 <code class="ip-address">{{ ip.ip }}</code>
+                {% if ip_tenant_map.get(ip.ip) %}
+                <span style="font-size: 0.65rem; color: #f59e0b;">👤 {{ ip_tenant_map[ip.ip] }}</span>
+                {% endif %}
                 {% if ip.server_name %}
                 <span class="ip-server">{{ ip.server_name }}</span>
                 {% endif %}
             </div>
             {% endfor %}
         </div>
-        {% elif not project.error %}
+        {% elif not project.error and not project.scripts %}
         <div style="color: #64748b; font-size: 0.9rem;">Нет Floating IP</div>
         {% endif %}
     </div>
     {% endfor %}
+    </div>
 </div>
 {% endfor %}
 
@@ -144,25 +192,62 @@
 </div>
 {% endif %}
 
+<!-- Модалка выбора скрипта для запуска -->
+<div id="script-modal" class="modal" onclick="if(event.target.id==='script-modal') closeScriptModal();">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3>▶ Запустить скрипт — <span id="modal-project-name" style="color: #f59e0b;"></span></h3>
+            <button class="modal-close" onclick="closeScriptModal()">✕</button>
+        </div>
+        <div class="modal-body" style="padding: 1rem;">
+            <p style="color: #94a3b8; margin-bottom: 1rem; font-size: 0.85rem;">Выберите скрипт на сервере. Проект будет назначен на выбранный скрипт и запущен.</p>
+            
+            {% for server in servers_scripts %}
+            <div style="margin-bottom: 1rem; border: 1px solid #334155; border-radius: 8px; overflow: hidden;">
+                <div style="padding: 0.6rem 1rem; background: rgba(245,158,11,0.08); border-bottom: 1px solid #334155; font-weight: 600;">
+                    🖥 {{ server.name }}
+                </div>
+                {% for script in server.scripts %}
+                <div class="script-pick-row" onclick="launchOnScript({{ server.id }}, {{ script.id }}, '{{ server.name }}', '{{ script.name }}', this)"
+                     style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; cursor: pointer; border-bottom: 1px solid rgba(51,65,85,0.5); transition: background 0.15s;"
+                     onmouseenter="this.style.background='rgba(245,158,11,0.1)'" onmouseleave="this.style.background='transparent'">
+                    <div style="display: flex; align-items: center; gap: 0.6rem;">
+                        <span style="color: {% if script.running %}#10b981{% else %}#ef4444{% endif %}; font-size: 1.1rem;">●</span>
+                        <div>
+                            <div style="font-weight: 500; color: #e2e8f0;">{{ script.name }}</div>
+                            <div style="font-size: 0.75rem; color: #64748b;">
+                                Проект: <span style="color: #94a3b8;">{{ script.project }}</span>
+                                &nbsp;·&nbsp; Аккаунт: <span style="color: #94a3b8;">{{ script.account }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center;">
+                        {% if script.running %}
+                        <span class="badge badge-green" style="font-size: 0.7rem;">Работает</span>
+                        {% else %}
+                        <span class="badge badge-red" style="font-size: 0.7rem;">Стоит</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
 <style>
-/* Модальное окно */
 .modal {
     display: none;
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
     background: rgba(0,0,0,0.7);
     z-index: 1000;
     justify-content: center;
     align-items: center;
 }
-
-.modal.active {
-    display: flex;
-}
-
+.modal.active { display: flex; }
 .modal-content {
     background: #1e293b;
     border-radius: 12px;
@@ -171,7 +256,6 @@
     overflow: hidden;
     border: 1px solid #334155;
 }
-
 .modal-header {
     display: flex;
     justify-content: space-between;
@@ -179,32 +263,18 @@
     padding: 1rem 1.5rem;
     border-bottom: 1px solid #334155;
 }
-
-.modal-header h3 {
-    margin: 0;
-    font-size: 1.1rem;
-}
-
+.modal-header h3 { margin: 0; font-size: 1.1rem; }
 .modal-close {
-    background: none;
-    border: none;
-    color: #64748b;
-    font-size: 1.5rem;
-    cursor: pointer;
-    padding: 0;
-    line-height: 1;
+    background: none; border: none;
+    color: #64748b; font-size: 1.5rem;
+    cursor: pointer; padding: 0; line-height: 1;
 }
-
-.modal-close:hover {
-    color: #ef4444;
-}
-
+.modal-close:hover { color: #ef4444; }
 .modal-body {
     padding: 1.5rem;
     overflow-y: auto;
     max-height: calc(80vh - 60px);
 }
-
 .modal-body textarea {
     width: 100%;
     padding: 0.75rem;
@@ -214,53 +284,34 @@
     color: #e2e8f0;
     resize: vertical;
 }
+.modal-body textarea:focus { outline: none; border-color: #f59e0b; }
 
-.modal-body textarea:focus {
-    outline: none;
-    border-color: #f59e0b;
-}
-
-.ip-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-}
-
+.ip-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .ip-item {
     padding: 0.4rem 0.75rem;
     border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
+    display: flex; flex-direction: column; gap: 0.2rem;
 }
-
 .ip-item.attached {
     background: rgba(16, 185, 129, 0.2);
     border: 1px solid rgba(16, 185, 129, 0.3);
 }
-
 .ip-item.free {
     background: rgba(100, 116, 139, 0.15);
     border: 1px solid rgba(100, 116, 139, 0.2);
 }
-
 .ip-address {
     font-family: 'Monaco', 'Menlo', monospace;
-    font-size: 0.85rem;
-    color: #e2e8f0;
+    font-size: 0.85rem; color: #e2e8f0;
 }
+.ip-item.attached .ip-address { color: #10b981; }
+.ip-server { font-size: 0.7rem; color: #64748b; }
+.ip-item.attached .ip-server { color: #6ee7b7; }
 
-.ip-item.attached .ip-address {
-    color: #10b981;
-}
-
-.ip-server {
-    font-size: 0.7rem;
-    color: #64748b;
-}
-
-.ip-item.attached .ip-server {
-    color: #6ee7b7;
+@media (max-width: 768px) {
+    div[style*="grid-template-columns: 1fr 1fr"] {
+        grid-template-columns: 1fr !important;
+    }
 }
 </style>
 {% endblock %}
@@ -269,17 +320,11 @@
 <script>
 async function refreshProjects() {
     const btn = document.getElementById('refresh-btn');
-    const lastUpdate = document.getElementById('last-update');
-    
     btn.disabled = true;
     btn.classList.add('btn-loading');
-    lastUpdate.textContent = 'Обновление...';
     
     try {
-        const res = await fetch('/api/projects/refresh', { 
-            method: 'POST',
-            credentials: 'same-origin'
-        });
+        const res = await fetch('/api/projects/refresh', { method: 'POST', credentials: 'same-origin' });
         const data = await res.json();
         
         if (data.ok) {
@@ -287,21 +332,18 @@ async function refreshProjects() {
             setTimeout(() => location.reload(), 500);
         } else {
             showToast('Ошибка: ' + (data.error || 'неизвестная'), 'error');
-            lastUpdate.textContent = 'Ошибка обновления';
         }
     } catch (e) {
         showToast('Ошибка: ' + e.message, 'error');
-        lastUpdate.textContent = 'Ошибка: ' + e.message;
     }
     
     btn.disabled = false;
     btn.classList.remove('btn-loading');
 }
 
-// Модальное окно добавления
 function openAddModal() {
     document.getElementById('add-modal').classList.add('active');
-    document.getElementById('project-name').focus();
+    document.getElementById('project-script').focus();
 }
 
 function closeAddModal() {
@@ -310,14 +352,11 @@ function closeAddModal() {
 }
 
 function closeModalOnBackdrop(event) {
-    if (event.target.id === 'add-modal') {
-        closeAddModal();
-    }
+    if (event.target.id === 'add-modal') closeAddModal();
 }
 
 async function submitProject(event) {
     event.preventDefault();
-    
     const btn = document.getElementById('submit-btn');
     btn.disabled = true;
     btn.classList.add('btn-loading');
@@ -325,12 +364,7 @@ async function submitProject(event) {
     const formData = new FormData(document.getElementById('add-project-form'));
     
     try {
-        const res = await fetch('/api/projects/add', {
-            method: 'POST',
-            body: formData,
-            credentials: 'same-origin'
-        });
-        
+        const res = await fetch('/api/projects/add', { method: 'POST', body: formData, credentials: 'same-origin' });
         const data = await res.json();
         
         if (data.ok) {
@@ -348,10 +382,136 @@ async function submitProject(event) {
     btn.classList.remove('btn-loading');
 }
 
-// Закрытие по Escape
+// Удаление проекта
+async function deleteProject(projectName) {
+    if (!confirm(`Удалить проект "${projectName}"?`)) return;
+    
+    try {
+        const res = await fetch(`/api/projects/${projectName}/delete`, { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json();
+        
+        if (data.ok) {
+            showToast(data.message, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+}
+
+// Удаление всех проектов аккаунта
+async function deleteAccount(username) {
+    if (!confirm(`Удалить ВСЕ проекты аккаунта "${username}"? Это действие необратимо!`)) return;
+    
+    try {
+        const res = await fetch(`/api/accounts/${encodeURIComponent(username)}/delete`, { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json();
+        
+        if (data.ok) {
+            showToast(data.message, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+}
+
+// ─── Модалка выбора скрипта ──────────────────────
+let currentProjectForScript = null;
+
+function openScriptModal(projectName) {
+    currentProjectForScript = projectName;
+    document.getElementById('modal-project-name').textContent = projectName;
+    document.getElementById('script-modal').classList.add('active');
+}
+
+function closeScriptModal() {
+    document.getElementById('script-modal').classList.remove('active');
+    currentProjectForScript = null;
+}
+
+// Назначить проект на скрипт и запустить
+async function launchOnScript(serverId, scriptId, serverName, scriptName, el) {
+    if (!currentProjectForScript) return;
+    
+    const projName = currentProjectForScript;
+    if (!confirm(`Назначить проект "${projName}" на ${serverName}/${scriptName} и запустить?`)) return;
+    
+    closeScriptModal();
+    showToast(`Назначаем ${projName} на ${serverName}/${scriptName}...`, 'info');
+    
+    try {
+        // 1. Сменить проект на скрипте
+        const formData = new FormData();
+        formData.append('project_name', projName);
+        
+        const res = await fetch(`/api/scripts/${serverId}/${scriptId}/change-project`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const data = await res.json();
+        
+        if (!data.ok) {
+            showToast('Ошибка: ' + (data.error || data.message), 'error');
+            return;
+        }
+        
+        // 2. Запустить/рестартнуть скрипт
+        const res2 = await fetch(`/servers/${serverId}/scripts/${scriptId}/restart`, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const data2 = await res2.json();
+        
+        if (data2.ok) {
+            showToast(`Скрипт запущен: ${serverName}/${scriptName} → ${projName}`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('Назначено, но ошибка запуска: ' + (data2.error || data2.message), 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+}
+
+// Остановить скрипт
+async function stopScript(serverId, scriptId, label, btn) {
+    if (!confirm(`Остановить скрипт ${label}?`)) return;
+    
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    
+    try {
+        const res = await fetch(`/servers/${serverId}/scripts/${scriptId}/stop`, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const data = await res.json();
+        
+        if (data.ok) {
+            showToast(`Остановлен: ${label}`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('Ошибка: ' + (data.error || data.message), 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+    
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+}
+
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAddModal();
+        closeScriptModal();
     }
 });
 </script>
