@@ -151,12 +151,13 @@
                 </button>
                 {% endif %}
                 
+                {% set free_count = project.ips|rejectattr('attached')|list|length %}
                 {% if rentals.get(project.name) %}
-                <button class="btn btn-sm" style="background: rgba(59,130,246,0.2); color: #3b82f6;" onclick="openRentModal('{{ project.name }}', true, {{ rentals[project.name].price }})" title="В аренде — {{ rentals[project.name].price }}₽/сут">
+                <button class="btn btn-sm" style="background: rgba(59,130,246,0.2); color: #3b82f6;" onclick="openRentModal('{{ project.name }}', true, {{ rentals[project.name].price }}, {{ free_count }})" title="В аренде — {{ rentals[project.name].price }}₽/сут">
                     🏠 {{ rentals[project.name].price }}₽
                 </button>
                 {% else %}
-                <button class="btn btn-sm" style="background: rgba(100,116,139,0.15); color: #64748b;" onclick="openRentModal('{{ project.name }}', false, 500)" title="Сдать в аренду">
+                <button class="btn btn-sm" style="background: rgba(100,116,139,0.15); color: #64748b;" onclick="openRentModal('{{ project.name }}', false, 500, {{ free_count }})" title="Сдать в аренду">
                     🏠
                 </button>
                 {% endif %}
@@ -289,9 +290,11 @@
             <form onsubmit="submitRent(event)">
                 <input type="hidden" id="rent-project-input">
                 <input type="hidden" id="rent-for-rent">
+                <input type="hidden" id="rent-price" value="0">
                 <div class="form-group" id="rent-price-group">
-                    <label>Цена за сутки (₽)</label>
-                    <input type="number" id="rent-price" min="0" step="100" value="500" style="font-size: 1.2rem;">
+                    <label>Цена за 1 IP в сутки (₽)</label>
+                    <input type="number" id="rent-price-per-ip" min="0" step="50" value="500" style="font-size: 1.2rem;" oninput="updateRentTotal()">
+                    <div id="rent-total" style="margin-top: 0.5rem; font-size: 1.1rem; color: #3b82f6; font-weight: 600;"></div>
                 </div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                     <button type="button" class="btn btn-secondary" onclick="closeRentModal()">Отмена</button>
@@ -630,13 +633,18 @@ async function submitSale(event) {
 }
 
 // ─── Модалка аренды ──────────────────────────
-function openRentModal(projectName, forRent, price) {
+let currentRentIpCount = 0;
+
+function openRentModal(projectName, forRent, price, ipCount) {
+    currentRentIpCount = ipCount || 0;
     document.getElementById('rent-project-name').textContent = projectName;
     document.getElementById('rent-project-input').value = projectName;
-    document.getElementById('rent-price').value = price || 500;
     document.getElementById('rent-modal').classList.add('active');
     
     const btn = document.getElementById('rent-submit-btn');
+    const pricePerIp = document.getElementById('rent-price-per-ip');
+    const totalEl = document.getElementById('rent-total');
+    
     if (forRent) {
         btn.textContent = '❌ Снять с аренды';
         btn.className = 'btn btn-danger';
@@ -648,8 +656,17 @@ function openRentModal(projectName, forRent, price) {
         btn.style.background = '#3b82f6';
         document.getElementById('rent-for-rent').value = 'true';
         document.getElementById('rent-price-group').style.display = 'block';
-        document.getElementById('rent-price').focus();
+        pricePerIp.value = price || 500;
+        updateRentTotal();
+        pricePerIp.focus();
     }
+}
+
+function updateRentTotal() {
+    const perIp = parseInt(document.getElementById('rent-price-per-ip').value) || 0;
+    const total = perIp * currentRentIpCount;
+    document.getElementById('rent-total').textContent = `${currentRentIpCount} IP × ${perIp}₽ = ${total}₽/сут`;
+    document.getElementById('rent-price').value = total;
 }
 
 function closeRentModal() {
