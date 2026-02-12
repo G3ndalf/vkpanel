@@ -20,11 +20,16 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# Контакты продавцов
 SELLERS = "@xlmmama @haxonate"
 
 
-# ─── API запросы к панели ─────────────────────────────────────
+def mask_ip(ip: str) -> str:
+    """Маскировка последнего октета IP: 5.188.203.45 → 5.188.203.***"""
+    parts = ip.rsplit(".", 1)
+    if len(parts) == 2:
+        return parts[0] + ".***"
+    return ip
+
 
 async def api_get(path: str) -> dict:
     """GET запрос к панели с API ключом."""
@@ -70,92 +75,73 @@ async def cmd_start(message: Message):
 
 @router.callback_query(F.data == "menu:buy")
 async def cb_buy(callback: CallbackQuery):
-    """Каталог аккаунтов на продажу."""
+    """Каталог аккаунтов на продажу — простой список."""
     await callback.answer()
 
     data = await api_get("/api/bot/accounts")
     accounts = data.get("accounts", [])
 
     if not accounts:
-        await callback.message.answer("😔 Сейчас нет аккаунтов в продаже.\n\nЗагляните позже!")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")]
+        ])
+        await callback.message.answer("😔 Сейчас нет аккаунтов в продаже.\n\nЗагляните позже!", reply_markup=keyboard)
         return
 
     lines = ["🛒 <b>Аккаунты на продажу</b>\n"]
-    buttons = []
 
     for i, acc in enumerate(accounts, 1):
-        ip_list = ", ".join(acc["ips"][:5])
-        if len(acc["ips"]) > 5:
-            ip_list += f" (+{len(acc['ips']) - 5})"
+        lines.append(f"<b>Аккаунт {i}</b>")
 
-        price_str = f"{acc['price']}₽" if acc["price"] else "договорная"
+        # Группируем IP по проектам
+        for j, proj in enumerate(acc.get("projects", []), 1):
+            lines.append(f"  Проект {j}")
+            for ip in proj.get("ips", []):
+                lines.append(f"    <code>{mask_ip(ip)}</code>")
 
-        lines.append(
-            f"<b>{i}. {acc['masked_email']}</b>\n"
-            f"   📦 Проектов: {acc['project_count']}\n"
-            f"   🌐 IP ({acc['ip_count']}): <code>{ip_list}</code>\n"
-            f"   💰 Цена: <b>{price_str}</b>\n"
-        )
+        lines.append("")
 
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"🛒 Купить #{i} — {acc['masked_email']}",
-                url=f"https://t.me/{SELLER_USERNAME}?text=Хочу купить аккаунт {acc['masked_email']} ({acc['ip_count']} IP)",
-            )
-        ])
+    lines.append(f"\nДля покупки: {SELLERS}")
 
-    # Кнопка "Назад"
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")]
+    ])
 
-    text = "\n".join(lines)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
 
 
 # ─── Каталог аренды ───────────────────────────────────────────
 
 @router.callback_query(F.data == "menu:rent")
 async def cb_rent(callback: CallbackQuery):
-    """Каталог проектов на аренду."""
+    """Каталог проектов на аренду — простой список."""
     await callback.answer()
 
     data = await api_get("/api/bot/rentals")
     projects = data.get("projects", [])
 
     if not projects:
-        await callback.message.answer("😔 Сейчас нет проектов для аренды.\n\nЗагляните позже!")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")]
+        ])
+        await callback.message.answer("😔 Сейчас нет проектов для аренды.\n\nЗагляните позже!", reply_markup=keyboard)
         return
 
     lines = ["📦 <b>Проекты на аренду</b>\n"]
-    buttons = []
 
     for i, proj in enumerate(projects, 1):
-        ip_list = ", ".join(proj["ips"][:3])
-        if len(proj["ips"]) > 3:
-            ip_list += f" (+{len(proj['ips']) - 3})"
+        lines.append(f"<b>Проект {i}</b>")
+        for ip in proj.get("ips", []):
+            lines.append(f"  <code>{mask_ip(ip)}</code>")
+        lines.append("")
 
-        price_str = f"{proj['price']}₽/сут" if proj["price"] else "500₽/сут"
+    lines.append(f"\nДля аренды: {SELLERS}")
 
-        lines.append(
-            f"<b>{i}. {proj['masked_project']}</b>\n"
-            f"   🌐 IP ({proj['ip_count']}): <code>{ip_list}</code>\n"
-            f"   💰 Цена: <b>{price_str}</b>\n"
-        )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")]
+    ])
 
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"📦 Арендовать #{i} — {proj['masked_project']}",
-                url=f"https://t.me/{SELLER_USERNAME}?text=Хочу арендовать проект {proj['masked_project']} ({proj['ip_count']} IP)",
-            )
-        ])
-
-    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")])
-
-    text = "\n".join(lines)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    await callback.message.answer("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
 
 
 # ─── Назад в меню ─────────────────────────────────────────────
@@ -165,28 +151,6 @@ async def cb_back(callback: CallbackQuery):
     """Вернуться в главное меню."""
     await callback.answer()
     await cmd_start(callback.message)
-
-
-# ─── Текстовые команды (фоллбэк) ─────────────────────────────
-
-@router.message(F.text.lower().in_(("/catalog", "/каталог", "каталог", "купить")))
-async def cmd_catalog(message: Message):
-    """Текстовая команда каталога."""
-    data = await api_get("/api/bot/accounts")
-    accounts = data.get("accounts", [])
-
-    if not accounts:
-        await message.answer("😔 Сейчас нет аккаунтов в продаже.")
-        return
-
-    # Пересылаем на callback-логику через фейковое сообщение
-    await cmd_start(message)
-
-
-@router.message(F.text.lower().in_(("/rent", "/аренда", "аренда")))
-async def cmd_rent(message: Message):
-    """Текстовая команда аренды."""
-    await cmd_start(message)
 
 
 # ─── Запуск ───────────────────────────────────────────────────

@@ -1398,17 +1398,22 @@ async def api_bot_accounts(request: Request):
         if not user_projects:
             continue
 
-        # Собираем все IP аккаунта, проверяем что ВСЕ свободны
+        # Собираем IP по проектам, проверяем что ВСЕ свободны
         all_ips = []
         all_free = True
+        projects_list = []
 
         for proj in user_projects:
             cached = projects_cache.get(proj["name"], {})
             ips = cached.get("ips", [])
+            proj_ips = []
             for ip in ips:
+                proj_ips.append(ip["ip"])
                 all_ips.append(ip["ip"])
                 if ip.get("attached"):
                     all_free = False
+            if proj_ips:
+                projects_list.append({"ips": proj_ips})
 
         # Только аккаунты где ВСЕ IP свободны (не привязаны к ВМ)
         if not all_free or not all_ips:
@@ -1420,6 +1425,7 @@ async def api_bot_accounts(request: Request):
             "ips": all_ips,
             "ip_count": len(all_ips),
             "project_count": len(user_projects),
+            "projects": projects_list,
             "price": sale_info.get("price", 0),
         })
 
