@@ -786,6 +786,7 @@ async def projects_page(request: Request):
 
     sales = data.get("sales", {})
     rentals = data.get("rentals", {})
+    pricing = data.get("pricing", {"sale_per_ip": 30000, "rent_per_ip": 500})
 
     return templates.TemplateResponse("projects.html", {
         "request": request,
@@ -799,6 +800,7 @@ async def projects_page(request: Request):
         "ip_tenant_map": ip_tenant_map,
         "sales": sales,
         "rentals": rentals,
+        "pricing": pricing,
         "last_update": projects_last_update,
     })
 
@@ -1328,6 +1330,27 @@ async def api_get_all_logs(request: Request, lines: int = Form(10)):
 
 # ─── Продажи (Sales) ──────────────────────────────────────────
 
+@app.post("/api/pricing")
+async def api_pricing(request: Request, sale_per_ip: int = Form(30000), rent_per_ip: int = Form(500)):
+    """Обновить глобальные цены за IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    data["pricing"] = {"sale_per_ip": max(0, sale_per_ip), "rent_per_ip": max(0, rent_per_ip)}
+    save_data(data)
+    logger.info(f"Pricing updated: sale={sale_per_ip}, rent={rent_per_ip}")
+    return JSONResponse({"ok": True, "sale_per_ip": sale_per_ip, "rent_per_ip": rent_per_ip})
+
+
+@app.get("/api/pricing")
+async def api_get_pricing(request: Request):
+    """Получить текущие цены."""
+    data = load_data()
+    pricing = data.get("pricing", {"sale_per_ip": 30000, "rent_per_ip": 500})
+    return pricing
+
+
 def mask_email(email: str) -> str:
     """Маскировка email: первые 3 символа + ***@domain."""
     if "@" not in email:
@@ -1348,15 +1371,13 @@ async def api_sales_toggle(
     request: Request,
     username: str,
     for_sale: bool = Form(False),
-    price: int = Form(0),
 ):
-    """Переключить статус продажи аккаунта (админ)."""
+    """Переключить статус продажи аккаунта (админ). Цена считается из pricing."""
     if not get_current_user(request):
         raise HTTPException(status_code=401)
 
     data = load_data()
 
-    # Проверяем что аккаунт существует
     account_exists = any(p["username"] == username for p in data.get("projects", []))
     if not account_exists:
         return JSONResponse({"ok": False, "error": "Аккаунт не найден"}, status_code=404)
@@ -1364,14 +1385,14 @@ async def api_sales_toggle(
     sales = data.setdefault("sales", {})
 
     if for_sale:
-        sales[username] = {"price": max(0, price), "updated": datetime.utcnow().isoformat()}
-        logger.info(f"Account {username} marked for sale, price={price}")
+        sales[username] = {"updated": datetime.utcnow().isoformat()}
+        logger.info(f"Account {username} marked for sale")
     else:
         sales.pop(username, None)
         logger.info(f"Account {username} removed from sale")
 
     save_data(data)
-    return JSONResponse({"ok": True, "for_sale": for_sale, "price": price})
+    return JSONResponse({"ok": True, "for_sale": for_sale})
 
 
 @app.get("/api/bot/accounts")
@@ -1383,9 +1404,11 @@ async def api_bot_accounts(request: Request):
     sales = data.get("sales", {})
     projects = data.get("projects", [])
     projects_cache = data.get("projects_cache", {})
+    pricing = data.get("pricing", {"sale_per_ip": 30000, "rent_per_ip": 500})
+    pricing_sale = pricing.get("sale_per_ip", 30000)
 
     if not sales:
-        return {"accounts": []}
+        return {"accounts": [], "price_per_ip": pricing_sale}
 
     # Группируем проекты по username
     accounts_projects: dict[str, list] = {}
@@ -1426,13 +1449,12 @@ async def api_bot_accounts(request: Request):
             "ip_count": len(all_ips),
             "project_count": len(user_projects),
             "projects": projects_list,
-            "price": sale_info.get("price", 0),
+            "price": pricing_sale * len(all_ips),
         })
 
-    # Сортируем по количеству IP (больше → выше)
     result.sort(key=lambda x: -x["ip_count"])
 
-    return {"accounts": result}
+    return {"accounts": result, "price_per_ip": pricing_sale}
 
 
 def mask_project_name(name: str) -> str:
@@ -1447,15 +1469,13 @@ async def api_rentals_toggle(
     request: Request,
     project_name: str,
     for_rent: bool = Form(False),
-    price: int = Form(500),
 ):
-    """Переключить статус аренды проекта (админ)."""
+    """Переключить статус аренды проекта (админ). Цена из pricing."""
     if not get_current_user(request):
         raise HTTPException(status_code=401)
 
     data = load_data()
 
-    # Проверяем что проект существует
     project_exists = any(p["name"] == project_name for p in data.get("projects", []))
     if not project_exists:
         return JSONResponse({"ok": False, "error": "Проект не найден"}, status_code=404)
@@ -1463,14 +1483,14 @@ async def api_rentals_toggle(
     rentals = data.setdefault("rentals", {})
 
     if for_rent:
-        rentals[project_name] = {"price": max(0, price), "updated": datetime.utcnow().isoformat()}
-        logger.info(f"Project {project_name} marked for rent, price={price}")
+        rentals[project_name] = {"updated": datetime.utcnow().isoformat()}
+        logger.info(f"Project {project_name} marked for rent")
     else:
         rentals.pop(project_name, None)
         logger.info(f"Project {project_name} removed from rent")
 
     save_data(data)
-    return JSONResponse({"ok": True, "for_rent": for_rent, "price": price})
+    return JSONResponse({"ok": True, "for_rent": for_rent})
 
 
 @app.get("/api/bot/rentals")
@@ -1482,16 +1502,17 @@ async def api_bot_rentals(request: Request):
     rentals = data.get("rentals", {})
     projects = data.get("projects", [])
     projects_cache = data.get("projects_cache", {})
+    pricing = data.get("pricing", {"sale_per_ip": 30000, "rent_per_ip": 500})
+    pricing_rent = pricing.get("rent_per_ip", 500)
 
     if not rentals:
-        return {"projects": []}
+        return {"projects": [], "price_per_ip": pricing_rent}
 
     result = []
     for proj in projects:
         if proj["name"] not in rentals:
             continue
 
-        rental_info = rentals[proj["name"]]
         cached = projects_cache.get(proj["name"], {})
         ips = cached.get("ips", [])
 
@@ -1506,11 +1527,11 @@ async def api_bot_rentals(request: Request):
             "username": proj["username"],
             "ips": free_ips,
             "ip_count": len(free_ips),
-            "price": rental_info.get("price", 500),
+            "price": pricing_rent * len(free_ips),
         })
 
     result.sort(key=lambda x: -x["ip_count"])
-    return {"projects": result}
+    return {"projects": result, "price_per_ip": pricing_rent}
 
 
 if __name__ == "__main__":

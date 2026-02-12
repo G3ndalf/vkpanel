@@ -13,6 +13,12 @@
             Ещё не обновлялось
             {% endif %}
         </span>
+        <button class="btn btn-sm" style="background: rgba(16,185,129,0.2); color: #10b981;" onclick="editPricing('sale')" title="Цена за IP при продаже">
+            💰 Продажа: {{ pricing.sale_per_ip|default(30000) }}₽/IP
+        </button>
+        <button class="btn btn-sm" style="background: rgba(59,130,246,0.2); color: #3b82f6;" onclick="editPricing('rent')" title="Цена за IP при аренде">
+            🏠 Аренда: {{ pricing.rent_per_ip|default(500) }}₽/IP
+        </button>
         <button class="btn btn-secondary" onclick="openAddModal()">
             ➕ Добавить проект
         </button>
@@ -94,11 +100,11 @@
             <span class="badge badge-green">{{ account_attached|length }} привязано</span>
             <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b;">{{ account_free|length }} свободно</span>
             {% if sales.get(account.username) %}
-            <button class="btn btn-sm" style="background: rgba(16,185,129,0.2); color: #10b981;" onclick="openSaleModal('{{ account.username }}', true, {{ sales[account.username].price }}, {{ account.total_ips }})" title="На продаже — {{ sales[account.username].price }}₽">
-                💰 {{ sales[account.username].price }}₽
+            <button class="btn btn-sm" style="background: rgba(16,185,129,0.2); color: #10b981;" onclick="toggleSale('{{ account.username }}', false)" title="Снять с продажи ({{ account.total_ips }} IP × {{ pricing.sale_per_ip }}₽ = {{ account.total_ips * pricing.sale_per_ip }}₽)">
+                💰 {{ (account.total_ips * pricing.sale_per_ip)|default(0) }}₽
             </button>
             {% else %}
-            <button class="btn btn-sm" style="background: rgba(100,116,139,0.2); color: #94a3b8;" onclick="openSaleModal('{{ account.username }}', false, 30000, {{ account.total_ips }})" title="Выставить на продажу">
+            <button class="btn btn-sm" style="background: rgba(100,116,139,0.2); color: #94a3b8;" onclick="toggleSale('{{ account.username }}', true)" title="Выставить на продажу ({{ account.total_ips }} IP × {{ pricing.sale_per_ip }}₽)">
                 🏷 Продать
             </button>
             {% endif %}
@@ -153,11 +159,11 @@
                 
                 {% set free_count = project.ips|rejectattr('attached')|list|length %}
                 {% if rentals.get(project.name) %}
-                <button class="btn btn-sm" style="background: rgba(59,130,246,0.2); color: #3b82f6;" onclick="openRentModal('{{ project.name }}', true, {{ rentals[project.name].price }}, {{ free_count }})" title="В аренде — {{ rentals[project.name].price }}₽/сут">
-                    🏠 {{ rentals[project.name].price }}₽
+                <button class="btn btn-sm" style="background: rgba(59,130,246,0.2); color: #3b82f6;" onclick="toggleRent('{{ project.name }}', false)" title="Снять с аренды ({{ free_count }} IP × {{ pricing.rent_per_ip }}₽ = {{ free_count * pricing.rent_per_ip }}₽/сут)">
+                    🏠 {{ free_count * pricing.rent_per_ip }}₽/сут
                 </button>
                 {% else %}
-                <button class="btn btn-sm" style="background: rgba(100,116,139,0.15); color: #64748b;" onclick="openRentModal('{{ project.name }}', false, 500, {{ free_count }})" title="Сдать в аренду">
+                <button class="btn btn-sm" style="background: rgba(100,116,139,0.15); color: #64748b;" onclick="toggleRent('{{ project.name }}', true)" title="Сдать в аренду ({{ free_count }} IP × {{ pricing.rent_per_ip }}₽)">
                     🏠
                 </button>
                 {% endif %}
@@ -251,58 +257,6 @@
                 {% endfor %}
             </div>
             {% endfor %}
-        </div>
-    </div>
-</div>
-
-<!-- Модалка продажи -->
-<div id="sale-modal" class="modal" onclick="if(event.target.id==='sale-modal') closeSaleModal();">
-    <div class="modal-content" style="max-width: 400px;">
-        <div class="modal-header">
-            <h3>🏷 Продажа — <span id="sale-username" style="color: #f59e0b;"></span></h3>
-            <button class="modal-close" onclick="closeSaleModal()">✕</button>
-        </div>
-        <div class="modal-body">
-            <form onsubmit="submitSale(event)">
-                <input type="hidden" id="sale-username-input">
-                <input type="hidden" id="sale-for-sale">
-                <input type="hidden" id="sale-price" value="0">
-                <div class="form-group" id="sale-price-group">
-                    <label>Цена за 1 IP (₽)</label>
-                    <input type="number" id="sale-price-per-ip" min="0" step="1000" value="30000" style="font-size: 1.2rem;" oninput="updateSaleTotal()">
-                    <div id="sale-total" style="margin-top: 0.5rem; font-size: 1.1rem; color: #10b981; font-weight: 600;"></div>
-                </div>
-                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-                    <button type="button" class="btn btn-secondary" onclick="closeSaleModal()">Отмена</button>
-                    <button type="submit" class="btn btn-primary" id="sale-submit-btn">💰 Выставить</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- Модалка аренды -->
-<div id="rent-modal" class="modal" onclick="if(event.target.id==='rent-modal') closeRentModal();">
-    <div class="modal-content" style="max-width: 400px;">
-        <div class="modal-header">
-            <h3>🏠 Аренда — <span id="rent-project-name" style="color: #3b82f6;"></span></h3>
-            <button class="modal-close" onclick="closeRentModal()">✕</button>
-        </div>
-        <div class="modal-body">
-            <form onsubmit="submitRent(event)">
-                <input type="hidden" id="rent-project-input">
-                <input type="hidden" id="rent-for-rent">
-                <input type="hidden" id="rent-price" value="0">
-                <div class="form-group" id="rent-price-group">
-                    <label>Цена за 1 IP в сутки (₽)</label>
-                    <input type="number" id="rent-price-per-ip" min="0" step="50" value="500" style="font-size: 1.2rem;" oninput="updateRentTotal()">
-                    <div id="rent-total" style="margin-top: 0.5rem; font-size: 1.1rem; color: #3b82f6; font-weight: 600;"></div>
-                </div>
-                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-                    <button type="button" class="btn btn-secondary" onclick="closeRentModal()">Отмена</button>
-                    <button type="submit" class="btn btn-primary" id="rent-submit-btn" style="background: #3b82f6;">🏠 Сдать в аренду</button>
-                </div>
-            </form>
         </div>
     </div>
 </div>
@@ -579,52 +533,13 @@ async function stopScript(serverId, scriptId, label, btn) {
     btn.classList.remove('btn-loading');
 }
 
-// ─── Модалка продажи ──────────────────────────
-let currentSaleIpCount = 0;
-
-function openSaleModal(username, forSale, pricePerIp, ipCount) {
-    currentSaleIpCount = ipCount || 0;
-    document.getElementById('sale-username').textContent = username;
-    document.getElementById('sale-username-input').value = username;
-    document.getElementById('sale-modal').classList.add('active');
-    
-    const btn = document.getElementById('sale-submit-btn');
-    if (forSale) {
-        btn.textContent = '❌ Снять с продажи';
-        btn.className = 'btn btn-danger';
-        document.getElementById('sale-for-sale').value = 'false';
-        document.getElementById('sale-price-group').style.display = 'none';
-    } else {
-        btn.textContent = '💰 Выставить на продажу';
-        btn.className = 'btn btn-primary';
-        document.getElementById('sale-for-sale').value = 'true';
-        document.getElementById('sale-price-group').style.display = 'block';
-        document.getElementById('sale-price-per-ip').value = pricePerIp || 30000;
-        updateSaleTotal();
-        document.getElementById('sale-price-per-ip').focus();
-    }
-}
-
-function updateSaleTotal() {
-    const perIp = parseInt(document.getElementById('sale-price-per-ip').value) || 0;
-    const total = perIp * currentSaleIpCount;
-    document.getElementById('sale-total').textContent = `${currentSaleIpCount} IP × ${perIp.toLocaleString('ru')}₽ = ${total.toLocaleString('ru')}₽`;
-    document.getElementById('sale-price').value = total;
-}
-
-function closeSaleModal() {
-    document.getElementById('sale-modal').classList.remove('active');
-}
-
-async function submitSale(event) {
-    event.preventDefault();
-    const username = document.getElementById('sale-username-input').value;
-    const forSale = document.getElementById('sale-for-sale').value === 'true';
-    const price = parseInt(document.getElementById('sale-price').value) || 0;
+// ─── Продажа (toggle) ──────────────────────────
+async function toggleSale(username, forSale) {
+    const action = forSale ? 'выставить на продажу' : 'снять с продажи';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} "${username}"?`)) return;
     
     const formData = new FormData();
     formData.append('for_sale', forSale);
-    formData.append('price', price);
     
     try {
         const res = await fetch(`/api/sales/${encodeURIComponent(username)}/toggle`, {
@@ -632,67 +547,21 @@ async function submitSale(event) {
         });
         const data = await res.json();
         if (data.ok) {
-            showToast(forSale ? `${username} на продаже за ${price}₽` : `${username} снят с продажи`, 'success');
-            closeSaleModal();
+            showToast(forSale ? `${username} на продаже` : `${username} снят с продажи`, 'success');
             setTimeout(() => location.reload(), 500);
         } else {
             showToast('Ошибка: ' + data.error, 'error');
         }
-    } catch (e) {
-        showToast('Ошибка: ' + e.message, 'error');
-    }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
-// ─── Модалка аренды ──────────────────────────
-let currentRentIpCount = 0;
-
-function openRentModal(projectName, forRent, price, ipCount) {
-    currentRentIpCount = ipCount || 0;
-    document.getElementById('rent-project-name').textContent = projectName;
-    document.getElementById('rent-project-input').value = projectName;
-    document.getElementById('rent-modal').classList.add('active');
-    
-    const btn = document.getElementById('rent-submit-btn');
-    const pricePerIp = document.getElementById('rent-price-per-ip');
-    const totalEl = document.getElementById('rent-total');
-    
-    if (forRent) {
-        btn.textContent = '❌ Снять с аренды';
-        btn.className = 'btn btn-danger';
-        document.getElementById('rent-for-rent').value = 'false';
-        document.getElementById('rent-price-group').style.display = 'none';
-    } else {
-        btn.textContent = '🏠 Сдать в аренду';
-        btn.className = 'btn btn-primary';
-        btn.style.background = '#3b82f6';
-        document.getElementById('rent-for-rent').value = 'true';
-        document.getElementById('rent-price-group').style.display = 'block';
-        pricePerIp.value = price || 500;
-        updateRentTotal();
-        pricePerIp.focus();
-    }
-}
-
-function updateRentTotal() {
-    const perIp = parseInt(document.getElementById('rent-price-per-ip').value) || 0;
-    const total = perIp * currentRentIpCount;
-    document.getElementById('rent-total').textContent = `${currentRentIpCount} IP × ${perIp}₽ = ${total}₽/сут`;
-    document.getElementById('rent-price').value = total;
-}
-
-function closeRentModal() {
-    document.getElementById('rent-modal').classList.remove('active');
-}
-
-async function submitRent(event) {
-    event.preventDefault();
-    const projectName = document.getElementById('rent-project-input').value;
-    const forRent = document.getElementById('rent-for-rent').value === 'true';
-    const price = parseInt(document.getElementById('rent-price').value) || 500;
+// ─── Аренда (toggle) ──────────────────────────
+async function toggleRent(projectName, forRent) {
+    const action = forRent ? 'сдать в аренду' : 'снять с аренды';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} "${projectName}"?`)) return;
     
     const formData = new FormData();
     formData.append('for_rent', forRent);
-    formData.append('price', price);
     
     try {
         const res = await fetch(`/api/rentals/${encodeURIComponent(projectName)}/toggle`, {
@@ -700,23 +569,43 @@ async function submitRent(event) {
         });
         const data = await res.json();
         if (data.ok) {
-            showToast(forRent ? `${projectName} в аренде за ${price}₽/сут` : `${projectName} снят с аренды`, 'success');
-            closeRentModal();
+            showToast(forRent ? `${projectName} в аренде` : `${projectName} снят с аренды`, 'success');
             setTimeout(() => location.reload(), 500);
         } else {
             showToast('Ошибка: ' + data.error, 'error');
         }
-    } catch (e) {
-        showToast('Ошибка: ' + e.message, 'error');
-    }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Глобальные цены ──────────────────────────
+function editPricing(type) {
+    const label = type === 'sale' ? 'продаже' : 'аренде (за сутки)';
+    const current = type === 'sale' ? {{ pricing.sale_per_ip|default(30000) }} : {{ pricing.rent_per_ip|default(500) }};
+    const value = prompt(`Цена за 1 IP при ${label}:`, current);
+    if (value === null) return;
+    
+    const price = parseInt(value);
+    if (isNaN(price) || price < 0) { showToast('Некорректная цена', 'error'); return; }
+    
+    const formData = new FormData();
+    formData.append('sale_per_ip', type === 'sale' ? price : {{ pricing.sale_per_ip|default(30000) }});
+    formData.append('rent_per_ip', type === 'rent' ? price : {{ pricing.rent_per_ip|default(500) }});
+    
+    fetch('/api/pricing', { method: 'POST', body: formData, credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                showToast(`Цена обновлена: ${price}₽/IP`, 'success');
+                setTimeout(() => location.reload(), 500);
+            } else { showToast('Ошибка', 'error'); }
+        })
+        .catch(e => showToast('Ошибка: ' + e.message, 'error'));
 }
 
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAddModal();
         closeScriptModal();
-        closeSaleModal();
-        closeRentModal();
     }
 });
 </script>
