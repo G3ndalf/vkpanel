@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% block title %}Логи — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.75rem;">
+    <h1>📜 Логи скриптов</h1>
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button class="btn btn-primary" onclick="loadAllLogs(10)" id="btn-10">
+            📥 Выгрузить 10 строк
+        </button>
+        <button class="btn btn-primary" onclick="loadAllLogs(50)" id="btn-50">
+            📥 Выгрузить 50 строк
+        </button>
+        <button class="btn btn-secondary" onclick="clearAllLogs()">
+            🗑 Очистить
+        </button>
+    </div>
+</div>
+
+<div id="logs-container">
+    {% for server in servers %}
+    {% for script in server.scripts %}
+    <div class="card log-card" id="log-{{ server.id }}-{{ script.id }}" style="margin-bottom: 0.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span style="color: {% if script.running %}#10b981{% else %}#ef4444{% endif %}; font-size: 1rem;">●</span>
+                <strong>{{ server.name }} / {{ script.name }}</strong>
+                <span style="font-size: 0.8rem; color: #64748b;">{{ script.project }}</span>
+            </div>
+            <div style="display: flex; gap: 0.3rem;">
+                <button class="btn btn-secondary btn-sm" onclick="loadScriptLog({{ server.id }}, {{ script.id }}, 10, this)">10</button>
+                <button class="btn btn-secondary btn-sm" onclick="loadScriptLog({{ server.id }}, {{ script.id }}, 50, this)">50</button>
+            </div>
+        </div>
+        {% set ck = server.id|string + '-' + script.id|string %}
+        {% set cached_log = logs_cache.get(ck, {}) %}
+        <pre class="log-output" id="log-output-{{ server.id }}-{{ script.id }}" {% if not cached_log %}style="display: none;"{% endif %}>{{ cached_log.get('log', '') }}</pre>
+        {% if cached_log.get('time') %}
+        <div style="font-size: 0.7rem; color: #475569; margin-top: 0.25rem; text-align: right;" data-log-time="{{ cached_log.time }}"></div>
+        {% endif %}
+    </div>
+    {% endfor %}
+    {% endfor %}
+</div>
+
+<style>
+.log-output {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 0.75rem;
+    font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: #94a3b8;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.log-output .log-error {
+    color: #ef4444;
+}
+.log-output .log-info {
+    color: #94a3b8;
+}
+.log-output .log-success {
+    color: #10b981;
+}
+.log-card.loading {
+    opacity: 0.6;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadAllLogs(lines) {
+    const btn = document.getElementById('btn-' + lines);
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    
+    showToast(`Загрузка логов (${lines} строк)...`, 'info', 5000);
+    
+    try {
+        const formData = new FormData();
+        formData.append('lines', lines);
+        
+        const res = await fetch('/api/logs/all', { method: 'POST', body: formData, credentials: 'same-origin' });
+        const data = await res.json();
+        
+        if (data.ok) {
+            for (const r of data.results) {
+                const el = document.getElementById(`log-output-${r.server_id}-${r.script_id}`);
+                if (el) {
+                    el.style.display = 'block';
+                    if (r.error) {
+                        el.innerHTML = `<span class="log-error">Ошибка: ${escapeHtml(r.error)}</span>`;
+                    } else {
+                        el.innerHTML = colorizeLog(r.log || '(пусто)');
+                    }
+                }
+            }
+            showToast(`Загружено: ${data.results.length} скриптов`, 'success');
+        } else {
+            showToast('Ошибка: ' + (data.error || ''), 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+    
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+}
+
+async function loadScriptLog(serverId, scriptId, lines, btn) {
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    
+    try {
+        const res = await fetch(`/api/logs/${serverId}/${scriptId}?lines=${lines}`, { credentials: 'same-origin' });
+        const data = await res.json();
+        
+        const el = document.getElementById(`log-output-${serverId}-${scriptId}`);
+        if (el) {
+            el.style.display = 'block';
+            if (data.ok) {
+                el.innerHTML = colorizeLog(data.log || '(пусто)');
+            } else {
+                el.innerHTML = `<span class="log-error">Ошибка: ${escapeHtml(data.error || '')}</span>`;
+            }
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+    
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+}
+
+function clearAllLogs() {
+    document.querySelectorAll('.log-output').forEach(el => {
+        el.style.display = 'none';
+        el.innerHTML = '';
+    });
+    showToast('Логи очищены', 'info');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function colorizeLog(text) {
+    return escapeHtml(text)
+        .replace(/ERROR|error|FAIL|fail|Exception|Traceback/g, '<span style="color:#ef4444;">$&</span>')
+        .replace(/WARNING|warn/gi, '<span style="color:#f59e0b;">$&</span>')
+        .replace(/SUCCESS|success|CAUGHT|caught|allocated/gi, '<span style="color:#10b981;">$&</span>')
+        .replace(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g, '<span style="color:#38bdf8;">$&</span>');
+}
+</script>
+{% endblock %}

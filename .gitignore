@@ -1,24 +1,7 @@
-# Данные с секретами
-data.json
-*.env
-.env
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
 venv/
-.venv/
-ENV/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
+._*
+data.json
+data.json.bak
+__pycache__/
+.env
 .DS_Store
-Thumbs.db

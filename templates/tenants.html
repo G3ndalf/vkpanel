@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block title %}Арендаторы — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.75rem;">
+    <h1>👥 Арендаторы</h1>
+    <button class="btn btn-primary" onclick="openAddTenantModal()">➕ Добавить арендатора</button>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">Арендаторов</div>
+        <div class="value">{{ tenants|length }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">IP в аренде</div>
+        <div class="value" style="color: #f59e0b;">{{ rented_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Всего IP</div>
+        <div class="value">{{ total_ips }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Свободных IP</div>
+        <div class="value" style="color: #10b981;">{{ total_ips - rented_count }}</div>
+    </div>
+</div>
+
+{% for tenant in tenants %}
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #334155; flex-wrap: wrap; gap: 0.5rem;">
+        <h2 style="margin: 0;">
+            👤 {{ tenant.name }}
+            <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">— {{ tenant.ips|length }} IP</span>
+        </h2>
+        <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-primary btn-sm" onclick="openAssignModal('{{ tenant.name }}')">➕ Добавить IP</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteTenant('{{ tenant.name }}')" style="opacity: 0.7;">🗑 Удалить</button>
+        </div>
+    </div>
+
+    {% if tenant.ips %}
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.5rem;">
+        {% for ip in tenant.ips %}
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; border-radius: 8px;
+            {% if ip.attached %}background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25);
+            {% else %}background: rgba(100,116,139,0.1); border: 1px solid rgba(100,116,139,0.2);{% endif %}">
+            <div>
+                <code style="font-family: monospace; font-size: 0.9rem; color: {% if ip.attached %}#10b981{% else %}#e2e8f0{% endif %};">{{ ip.ip }}</code>
+                <div style="font-size: 0.7rem; color: #64748b; margin-top: 0.15rem;">
+                    {{ ip.project }} · {{ ip.account }}
+                    {% if ip.server_name %} · {{ ip.server_name }}{% endif %}
+                </div>
+            </div>
+            <button class="btn btn-danger btn-sm" onclick="unassignIp('{{ tenant.name }}', '{{ ip.ip }}')" title="Отвязать IP" style="opacity: 0.6; padding: 0.15rem 0.4rem;">✕</button>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="color: #64748b; font-size: 0.9rem;">Нет привязанных IP. Нажмите "Добавить IP".</div>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% if not tenants %}
+<div class="card">
+    <div class="empty">
+        <p>Арендаторов пока нет</p>
+        <p style="margin-top: 0.5rem; font-size: 0.9rem; color: #64748b;">Нажмите "Добавить арендатора" чтобы создать первого</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Модалка добавления арендатора -->
+<div id="add-tenant-modal" class="modal" onclick="if(event.target.id==='add-tenant-modal') closeAddTenantModal();">
+    <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+            <h3>➕ Новый арендатор</h3>
+            <button class="modal-close" onclick="closeAddTenantModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <form id="add-tenant-form" onsubmit="submitTenant(event)">
+                <div class="form-group">
+                    <label>Имя арендатора</label>
+                    <input type="text" name="name" id="tenant-name" placeholder="Например: Иван" required>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeAddTenantModal()">Отмена</button>
+                    <button type="submit" class="btn btn-primary" id="add-tenant-btn">Создать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка назначения IP -->
+<div id="assign-modal" class="modal" onclick="if(event.target.id==='assign-modal') closeAssignModal();">
+    <div class="modal-content" style="max-width: 650px;">
+        <div class="modal-header">
+            <h3>➕ Добавить IP — <span id="assign-tenant-name" style="color: #f59e0b;"></span></h3>
+            <button class="modal-close" onclick="closeAssignModal()">✕</button>
+        </div>
+        <div class="modal-body" style="padding: 1rem;">
+            <input type="text" id="ip-search" class="form-group" placeholder="🔍 Поиск по IP, проекту, аккаунту..." oninput="filterIps()" style="width: 100%; padding: 0.6rem 1rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; margin-bottom: 0.75rem;">
+            
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <button class="btn btn-sm btn-secondary filter-btn active" onclick="setFilter('all', this)">Все</button>
+                <button class="btn btn-sm btn-secondary filter-btn" onclick="setFilter('free', this)">Свободные</button>
+                <button class="btn btn-sm btn-secondary filter-btn" onclick="setFilter('rented', this)">В аренде</button>
+            </div>
+
+            <div id="ip-list" style="max-height: 400px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.3rem;">
+                {% for ip in all_ips %}
+                <div class="ip-pick-row" 
+                     data-ip="{{ ip.ip }}" 
+                     data-project="{{ ip.project }}" 
+                     data-account="{{ ip.account }}"
+                     data-rented="{{ ip.rented_by or '' }}"
+                     onclick="{% if not ip.rented_by %}assignIp('{{ ip.ip }}'){% endif %}"
+                     style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; border-radius: 6px; cursor: {% if ip.rented_by %}default{% else %}pointer{% endif %}; transition: background 0.15s;
+                     {% if ip.rented_by %}background: rgba(100,116,139,0.08); opacity: 0.6;{% else %}background: rgba(0,0,0,0.15);{% endif %}"
+                     {% if not ip.rented_by %}onmouseenter="this.style.background='rgba(245,158,11,0.12)'" onmouseleave="this.style.background='rgba(0,0,0,0.15)'"{% endif %}>
+                    <div>
+                        <code style="font-size: 0.85rem; color: #e2e8f0;">{{ ip.ip }}</code>
+                        <span style="font-size: 0.75rem; color: #64748b; margin-left: 0.5rem;">{{ ip.project }} · {{ ip.account }}</span>
+                    </div>
+                    {% if ip.rented_by %}
+                    <span class="badge badge-yellow" style="font-size: 0.7rem;">{{ ip.rented_by }}</span>
+                    {% else %}
+                    <span style="font-size: 0.75rem; color: #10b981;">свободен</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+.modal.active { display: flex; }
+.modal-content {
+    background: #1e293b;
+    border-radius: 12px;
+    width: 90%;
+    max-height: 85vh;
+    overflow: hidden;
+    border: 1px solid #334155;
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #334155;
+}
+.modal-header h3 { margin: 0; font-size: 1.1rem; }
+.modal-close {
+    background: none; border: none;
+    color: #64748b; font-size: 1.5rem;
+    cursor: pointer; padding: 0; line-height: 1;
+}
+.modal-close:hover { color: #ef4444; }
+.modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    max-height: calc(85vh - 60px);
+}
+.filter-btn.active {
+    background: #f59e0b !important;
+    color: #0f172a !important;
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentAssignTenant = null;
+let currentFilter = 'all';
+
+// ─── Арендаторы CRUD ─────────────────────────
+function openAddTenantModal() {
+    document.getElementById('add-tenant-modal').classList.add('active');
+    document.getElementById('tenant-name').focus();
+}
+function closeAddTenantModal() {
+    document.getElementById('add-tenant-modal').classList.remove('active');
+    document.getElementById('add-tenant-form').reset();
+}
+
+async function submitTenant(e) {
+    e.preventDefault();
+    const btn = document.getElementById('add-tenant-btn');
+    btn.disabled = true; btn.classList.add('btn-loading');
+    
+    const formData = new FormData(document.getElementById('add-tenant-form'));
+    try {
+        const res = await fetch('/api/tenants/add', { method: 'POST', body: formData, credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.message, 'success');
+            closeAddTenantModal();
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + data.error, 'error');
+        }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+    btn.disabled = false; btn.classList.remove('btn-loading');
+}
+
+async function deleteTenant(name) {
+    if (!confirm(`Удалить арендатора "${name}" и отвязать все его IP?`)) return;
+    try {
+        const res = await fetch(`/api/tenants/${encodeURIComponent(name)}/delete`, { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.message, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else { showToast('Ошибка: ' + data.error, 'error'); }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Назначение IP ────────────────────────────
+function openAssignModal(tenantName) {
+    currentAssignTenant = tenantName;
+    document.getElementById('assign-tenant-name').textContent = tenantName;
+    document.getElementById('ip-search').value = '';
+    currentFilter = 'all';
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('.filter-btn').classList.add('active');
+    filterIps();
+    document.getElementById('assign-modal').classList.add('active');
+    document.getElementById('ip-search').focus();
+}
+function closeAssignModal() {
+    document.getElementById('assign-modal').classList.remove('active');
+    currentAssignTenant = null;
+}
+
+function setFilter(filter, btn) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    filterIps();
+}
+
+function filterIps() {
+    const search = document.getElementById('ip-search').value.toLowerCase();
+    const rows = document.querySelectorAll('.ip-pick-row');
+    rows.forEach(row => {
+        const ip = row.dataset.ip.toLowerCase();
+        const project = row.dataset.project.toLowerCase();
+        const account = row.dataset.account.toLowerCase();
+        const rented = row.dataset.rented;
+        
+        let matchSearch = ip.includes(search) || project.includes(search) || account.includes(search) || rented.toLowerCase().includes(search);
+        let matchFilter = true;
+        if (currentFilter === 'free') matchFilter = !rented;
+        if (currentFilter === 'rented') matchFilter = !!rented;
+        
+        row.style.display = (matchSearch && matchFilter) ? 'flex' : 'none';
+    });
+}
+
+async function assignIp(ip) {
+    if (!currentAssignTenant) return;
+    try {
+        const formData = new FormData();
+        formData.append('ip', ip);
+        const res = await fetch(`/api/tenants/${encodeURIComponent(currentAssignTenant)}/assign-ip`, { method: 'POST', body: formData, credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.message, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else { showToast('Ошибка: ' + data.error, 'error'); }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function unassignIp(tenantName, ip) {
+    if (!confirm(`Отвязать IP ${ip} от "${tenantName}"?`)) return;
+    try {
+        const formData = new FormData();
+        formData.append('ip', ip);
+        const res = await fetch(`/api/tenants/${encodeURIComponent(tenantName)}/unassign-ip`, { method: 'POST', body: formData, credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.message, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else { showToast('Ошибка: ' + data.error, 'error'); }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeAddTenantModal(); closeAssignModal(); }
+});
+</script>
+{% endblock %}
