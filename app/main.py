@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import (
     ADMIN_USER, ADMIN_PASS, SECRET_KEY,
     BASE_DIR, MAX_SSH_WORKERS, MAX_CLOUD_WORKERS,
+    BOT_API_KEY,
 )
 from .data import (
     load_data, save_data,
@@ -783,6 +784,8 @@ async def projects_page(request: Request):
         for ip_addr in t.get("ips", []):
             ip_tenant_map[ip_addr] = t["name"]
 
+    sales = data.get("sales", {})
+
     return templates.TemplateResponse("projects.html", {
         "request": request,
         "user": user,
@@ -793,6 +796,7 @@ async def projects_page(request: Request):
         "scripts_total": scripts_total,
         "servers_scripts": servers_scripts_info,
         "ip_tenant_map": ip_tenant_map,
+        "sales": sales,
         "last_update": projects_last_update,
     })
 
@@ -1318,6 +1322,109 @@ async def api_get_all_logs(request: Request, lines: int = Form(10)):
     save_data(data)
 
     return JSONResponse({"ok": True, "results": results, "lines": lines})
+
+
+# ─── Продажи (Sales) ──────────────────────────────────────────
+
+def mask_email(email: str) -> str:
+    """Маскировка email: первые 3 символа + ***@domain."""
+    if "@" not in email:
+        return email[:3] + "***"
+    local, domain = email.rsplit("@", 1)
+    return local[:3] + "***@" + domain
+
+
+def require_bot_api_key(request: Request):
+    """Проверить X-API-Key для бот-эндпоинтов."""
+    key = request.headers.get("X-API-Key", "")
+    if key != BOT_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+
+@app.post("/api/sales/{username}/toggle")
+async def api_sales_toggle(
+    request: Request,
+    username: str,
+    for_sale: bool = Form(False),
+    price: int = Form(0),
+):
+    """Переключить статус продажи аккаунта (админ)."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+
+    # Проверяем что аккаунт существует
+    account_exists = any(p["username"] == username for p in data.get("projects", []))
+    if not account_exists:
+        return JSONResponse({"ok": False, "error": "Аккаунт не найден"}, status_code=404)
+
+    sales = data.setdefault("sales", {})
+
+    if for_sale:
+        sales[username] = {"price": max(0, price), "updated": datetime.utcnow().isoformat()}
+        logger.info(f"Account {username} marked for sale, price={price}")
+    else:
+        sales.pop(username, None)
+        logger.info(f"Account {username} removed from sale")
+
+    save_data(data)
+    return JSONResponse({"ok": True, "for_sale": for_sale, "price": price})
+
+
+@app.get("/api/bot/accounts")
+async def api_bot_accounts(request: Request):
+    """API для бота: список аккаунтов на продажу с незанятыми IP."""
+    require_bot_api_key(request)
+
+    data = load_data()
+    sales = data.get("sales", {})
+    projects = data.get("projects", [])
+    projects_cache = data.get("projects_cache", {})
+
+    if not sales:
+        return {"accounts": []}
+
+    # Группируем проекты по username
+    accounts_projects: dict[str, list] = {}
+    for proj in projects:
+        accounts_projects.setdefault(proj["username"], []).append(proj)
+
+    result = []
+    for username, sale_info in sales.items():
+        user_projects = accounts_projects.get(username, [])
+        if not user_projects:
+            continue
+
+        # Собираем все IP аккаунта, проверяем что ВСЕ свободны
+        all_ips = []
+        all_free = True
+
+        for proj in user_projects:
+            cached = projects_cache.get(proj["name"], {})
+            ips = cached.get("ips", [])
+            for ip in ips:
+                all_ips.append(ip["ip"])
+                if ip.get("attached"):
+                    all_free = False
+
+        # Только аккаунты где ВСЕ IP свободны (не привязаны к ВМ)
+        if not all_free or not all_ips:
+            continue
+
+        result.append({
+            "username": username,
+            "masked_email": mask_email(username),
+            "ips": all_ips,
+            "ip_count": len(all_ips),
+            "project_count": len(user_projects),
+            "price": sale_info.get("price", 0),
+        })
+
+    # Сортируем по количеству IP (больше → выше)
+    result.sort(key=lambda x: -x["ip_count"])
+
+    return {"accounts": result}
 
 
 if __name__ == "__main__":

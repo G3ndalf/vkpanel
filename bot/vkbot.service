@@ -1,0 +1,18 @@
+[Unit]
+Description=VK Sales Telegram Bot
+After=network.target vkpanel.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vkpanel
+Environment=BOT_TOKEN=CHANGE_ME
+Environment=PANEL_URL=http://127.0.0.1:8080
+Environment=BOT_API_KEY=vkpanel-bot-secret-2026
+Environment=SELLER_USERNAME=xlmmama
+ExecStart=/opt/vkpanel/venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
