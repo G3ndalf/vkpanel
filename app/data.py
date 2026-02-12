@@ -28,6 +28,7 @@ def load_data() -> dict:
                 data.setdefault("last_update", None)
                 data.setdefault("cloud_last_update", None)
                 data.setdefault("projects_last_update", None)
+                data.setdefault("sales", {})
                 return data
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse {DATA_FILE}: {e}")
@@ -44,6 +45,7 @@ def load_data() -> dict:
         "last_update": None,
         "cloud_last_update": None,
         "projects_last_update": None,
+        "sales": {},
     }
 
 

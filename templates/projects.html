@@ -22,6 +22,27 @@
     </div>
 </div>
 
+<!-- Модальное окно продажи -->
+<div id="sale-modal" class="modal" onclick="if(event.target.id==='sale-modal')closeSaleModal()">
+    <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+            <h3>🏷️ Выставить на продажу</h3>
+            <button class="modal-close" onclick="closeSaleModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="color: #94a3b8; margin-bottom: 1rem;">Аккаунт: <strong id="sale-username" style="color: #e2e8f0;"></strong></p>
+            <div class="form-group">
+                <label>Цена (₽)</label>
+                <input type="number" id="sale-price" placeholder="5000" min="0" style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0;">
+            </div>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+                <button class="btn btn-secondary" onclick="closeSaleModal()">Отмена</button>
+                <button class="btn" style="background: #8b5cf6;" onclick="submitSale()">Выставить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Модальное окно добавления проекта -->
 <div id="add-modal" class="modal" onclick="closeModalOnBackdrop(event)">
     <div class="modal-content" style="max-width: 500px;">
@@ -84,11 +105,19 @@
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #334155;">
         <h2 style="margin: 0;">
             👤 {{ account.username }}
+            {% if sales.get(account.username, {}).get('for_sale') %}
+            <span class="badge" style="background: rgba(139,92,246,0.2); color: #a78bfa; margin-left: 0.5rem;">🏷️ {{ sales[account.username].price }}₽</span>
+            {% endif %}
         </h2>
         <div style="display: flex; gap: 0.75rem; align-items: center;">
             <span style="color: #94a3b8; font-size: 0.9rem;">{{ account.total_ips }} IP:</span>
             <span class="badge badge-green">{{ account_attached|length }} привязано</span>
             <span class="badge" style="background: rgba(245,158,11,0.2); color: #f59e0b;">{{ account_free|length }} свободно</span>
+            {% if sales.get(account.username, {}).get('for_sale') %}
+            <button class="btn btn-sm" style="background: #ef4444; font-size: 0.75rem; padding: 0.25rem 0.6rem;" onclick="toggleSale('{{ account.username }}', false, 0)">Снять с продажи</button>
+            {% else %}
+            <button class="btn btn-sm" style="background: #8b5cf6; font-size: 0.75rem; padding: 0.25rem 0.6rem;" onclick="openSaleModal('{{ account.username }}')">🏷️ Продать</button>
+            {% endif %}
         </div>
     </div>
     
@@ -349,10 +378,56 @@ async function submitProject(event) {
     btn.classList.remove('btn-loading');
 }
 
+// ─── Продажи ───
+let saleUsername = '';
+
+function openSaleModal(username) {
+    saleUsername = username;
+    document.getElementById('sale-username').textContent = username;
+    document.getElementById('sale-price').value = '';
+    document.getElementById('sale-modal').classList.add('active');
+    document.getElementById('sale-price').focus();
+}
+
+function closeSaleModal() {
+    document.getElementById('sale-modal').classList.remove('active');
+}
+
+async function submitSale() {
+    const price = document.getElementById('sale-price').value || 0;
+    await toggleSale(saleUsername, true, price);
+    closeSaleModal();
+}
+
+async function toggleSale(username, forSale, price) {
+    try {
+        const formData = new FormData();
+        formData.append('for_sale', forSale);
+        formData.append('price', price);
+        
+        const res = await fetch(`/api/sales/${encodeURIComponent(username)}/toggle`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+        });
+        const data = await res.json();
+        
+        if (data.ok) {
+            showToast(forSale ? `${username} выставлен на продажу за ${price}₽` : `${username} снят с продажи`, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + (data.error || 'неизвестная'), 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+}
+
 // Закрытие по Escape
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAddModal();
+        closeSaleModal();
     }
 });
 </script>
