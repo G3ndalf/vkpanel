@@ -785,6 +785,7 @@ async def projects_page(request: Request):
             ip_tenant_map[ip_addr] = t["name"]
 
     sales = data.get("sales", {})
+    rentals = data.get("rentals", {})
 
     return templates.TemplateResponse("projects.html", {
         "request": request,
@@ -797,6 +798,7 @@ async def projects_page(request: Request):
         "servers_scripts": servers_scripts_info,
         "ip_tenant_map": ip_tenant_map,
         "sales": sales,
+        "rentals": rentals,
         "last_update": projects_last_update,
     })
 
@@ -1425,6 +1427,84 @@ async def api_bot_accounts(request: Request):
     result.sort(key=lambda x: -x["ip_count"])
 
     return {"accounts": result}
+
+
+def mask_project_name(name: str) -> str:
+    """Маскировка имени проекта: первые 4 символа + ***."""
+    if len(name) <= 4:
+        return name + "***"
+    return name[:4] + "***"
+
+
+@app.post("/api/rentals/{project_name}/toggle")
+async def api_rentals_toggle(
+    request: Request,
+    project_name: str,
+    for_rent: bool = Form(False),
+    price: int = Form(500),
+):
+    """Переключить статус аренды проекта (админ)."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+
+    # Проверяем что проект существует
+    project_exists = any(p["name"] == project_name for p in data.get("projects", []))
+    if not project_exists:
+        return JSONResponse({"ok": False, "error": "Проект не найден"}, status_code=404)
+
+    rentals = data.setdefault("rentals", {})
+
+    if for_rent:
+        rentals[project_name] = {"price": max(0, price), "updated": datetime.utcnow().isoformat()}
+        logger.info(f"Project {project_name} marked for rent, price={price}")
+    else:
+        rentals.pop(project_name, None)
+        logger.info(f"Project {project_name} removed from rent")
+
+    save_data(data)
+    return JSONResponse({"ok": True, "for_rent": for_rent, "price": price})
+
+
+@app.get("/api/bot/rentals")
+async def api_bot_rentals(request: Request):
+    """API для бота: список проектов на аренду с незанятыми IP."""
+    require_bot_api_key(request)
+
+    data = load_data()
+    rentals = data.get("rentals", {})
+    projects = data.get("projects", [])
+    projects_cache = data.get("projects_cache", {})
+
+    if not rentals:
+        return {"projects": []}
+
+    result = []
+    for proj in projects:
+        if proj["name"] not in rentals:
+            continue
+
+        rental_info = rentals[proj["name"]]
+        cached = projects_cache.get(proj["name"], {})
+        ips = cached.get("ips", [])
+
+        # Только свободные IP (не привязаны к ВМ)
+        free_ips = [ip["ip"] for ip in ips if not ip.get("attached")]
+        if not free_ips:
+            continue
+
+        result.append({
+            "project_name": proj["name"],
+            "masked_project": mask_project_name(proj["name"]),
+            "username": proj["username"],
+            "ips": free_ips,
+            "ip_count": len(free_ips),
+            "price": rental_info.get("price", 500),
+        })
+
+    result.sort(key=lambda x: -x["ip_count"])
+    return {"projects": result}
 
 
 if __name__ == "__main__":

@@ -151,6 +151,15 @@
                 </button>
                 {% endif %}
                 
+                {% if rentals.get(project.name) %}
+                <button class="btn btn-sm" style="background: rgba(59,130,246,0.2); color: #3b82f6;" onclick="openRentModal('{{ project.name }}', true, {{ rentals[project.name].price }})" title="В аренде — {{ rentals[project.name].price }}₽/сут">
+                    🏠 {{ rentals[project.name].price }}₽
+                </button>
+                {% else %}
+                <button class="btn btn-sm" style="background: rgba(100,116,139,0.15); color: #64748b;" onclick="openRentModal('{{ project.name }}', false, 500)" title="Сдать в аренду">
+                    🏠
+                </button>
+                {% endif %}
                 <button class="btn btn-danger btn-sm" onclick="deleteProject('{{ project.name }}')" title="Удалить проект" style="opacity: 0.6;">✕</button>
             </div>
         </div>
@@ -263,6 +272,30 @@
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                     <button type="button" class="btn btn-secondary" onclick="closeSaleModal()">Отмена</button>
                     <button type="submit" class="btn btn-primary" id="sale-submit-btn">💰 Выставить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка аренды -->
+<div id="rent-modal" class="modal" onclick="if(event.target.id==='rent-modal') closeRentModal();">
+    <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+            <h3>🏠 Аренда — <span id="rent-project-name" style="color: #3b82f6;"></span></h3>
+            <button class="modal-close" onclick="closeRentModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <form onsubmit="submitRent(event)">
+                <input type="hidden" id="rent-project-input">
+                <input type="hidden" id="rent-for-rent">
+                <div class="form-group" id="rent-price-group">
+                    <label>Цена за сутки (₽)</label>
+                    <input type="number" id="rent-price" min="0" step="100" value="500" style="font-size: 1.2rem;">
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeRentModal()">Отмена</button>
+                    <button type="submit" class="btn btn-primary" id="rent-submit-btn" style="background: #3b82f6;">🏠 Сдать в аренду</button>
                 </div>
             </form>
         </div>
@@ -596,11 +629,66 @@ async function submitSale(event) {
     }
 }
 
+// ─── Модалка аренды ──────────────────────────
+function openRentModal(projectName, forRent, price) {
+    document.getElementById('rent-project-name').textContent = projectName;
+    document.getElementById('rent-project-input').value = projectName;
+    document.getElementById('rent-price').value = price || 500;
+    document.getElementById('rent-modal').classList.add('active');
+    
+    const btn = document.getElementById('rent-submit-btn');
+    if (forRent) {
+        btn.textContent = '❌ Снять с аренды';
+        btn.className = 'btn btn-danger';
+        document.getElementById('rent-for-rent').value = 'false';
+        document.getElementById('rent-price-group').style.display = 'none';
+    } else {
+        btn.textContent = '🏠 Сдать в аренду';
+        btn.className = 'btn btn-primary';
+        btn.style.background = '#3b82f6';
+        document.getElementById('rent-for-rent').value = 'true';
+        document.getElementById('rent-price-group').style.display = 'block';
+        document.getElementById('rent-price').focus();
+    }
+}
+
+function closeRentModal() {
+    document.getElementById('rent-modal').classList.remove('active');
+}
+
+async function submitRent(event) {
+    event.preventDefault();
+    const projectName = document.getElementById('rent-project-input').value;
+    const forRent = document.getElementById('rent-for-rent').value === 'true';
+    const price = parseInt(document.getElementById('rent-price').value) || 500;
+    
+    const formData = new FormData();
+    formData.append('for_rent', forRent);
+    formData.append('price', price);
+    
+    try {
+        const res = await fetch(`/api/rentals/${encodeURIComponent(projectName)}/toggle`, {
+            method: 'POST', body: formData, credentials: 'same-origin'
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(forRent ? `${projectName} в аренде за ${price}₽/сут` : `${projectName} снят с аренды`, 'success');
+            closeRentModal();
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + data.error, 'error');
+        }
+    } catch (e) {
+        showToast('Ошибка: ' + e.message, 'error');
+    }
+}
+
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAddModal();
         closeScriptModal();
         closeSaleModal();
+        closeRentModal();
     }
 });
 </script>

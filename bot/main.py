@@ -1,5 +1,5 @@
 """
-Telegram бот продаж VK Cloud аккаунтов.
+Telegram бот продаж и аренды VK Cloud.
 aiogram 3 + aiohttp для запросов к панели.
 """
 import asyncio
@@ -20,32 +20,69 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+# Контакты продавцов
+SELLERS = "@xlmmama @haxonate"
 
-async def fetch_accounts() -> list[dict]:
-    """Получить список аккаунтов на продажу из панели."""
-    url = f"{PANEL_URL}/api/bot/accounts"
+
+# ─── API запросы к панели ─────────────────────────────────────
+
+async def api_get(path: str) -> dict:
+    """GET запрос к панели с API ключом."""
+    url = f"{PANEL_URL}{path}"
     headers = {"X-API-Key": BOT_API_KEY}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    logger.error(f"Panel API error: {resp.status}")
-                    return []
-                data = await resp.json()
-                return data.get("accounts", [])
+                    logger.error(f"Panel API error {resp.status}: {path}")
+                    return {}
+                return await resp.json()
     except Exception as e:
-        logger.error(f"Failed to fetch accounts: {e}")
-        return []
+        logger.error(f"API request failed: {e}")
+        return {}
 
 
-def build_catalog_message(accounts: list[dict]) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Построить сообщение каталога и клавиатуру."""
+# ─── /start ───────────────────────────────────────────────────
+
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    """Приветствие с тарифами и кнопками."""
+    text = (
+        "👋 <b>Здравствуйте!</b>\n\n"
+        "У нас вы можете полностью выкупить аккаунт VK Cloud "
+        "или арендовать проект с Floating IP.\n\n"
+        f"Для покупки/аренды писать:\n{SELLERS}\n\n"
+        "📋 <b>Тарифы:</b>\n"
+        "• Любой IP на покупку — <b>30 000₽</b>\n"
+        "• Любой IP в аренду — <b>500₽/сутки</b>\n\n"
+        "Выберите, что вас интересует 👇"
+    )
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Купить аккаунт", callback_data="menu:buy")],
+        [InlineKeyboardButton(text="📦 Аренда проекта", callback_data="menu:rent")],
+    ])
+
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+# ─── Каталог покупки ──────────────────────────────────────────
+
+@router.callback_query(F.data == "menu:buy")
+async def cb_buy(callback: CallbackQuery):
+    """Каталог аккаунтов на продажу."""
+    await callback.answer()
+
+    data = await api_get("/api/bot/accounts")
+    accounts = data.get("accounts", [])
+
     if not accounts:
-        return "😔 Сейчас нет аккаунтов в продаже.\n\nЗагляните позже!", None
+        await callback.message.answer("😔 Сейчас нет аккаунтов в продаже.\n\nЗагляните позже!")
+        return
 
-    lines = ["🛒 <b>Каталог VK Cloud аккаунтов</b>\n"]
-
+    lines = ["🛒 <b>Аккаунты на продажу</b>\n"]
     buttons = []
+
     for i, acc in enumerate(accounts, 1):
         ip_list = ", ".join(acc["ips"][:5])
         if len(acc["ips"]) > 5:
@@ -60,42 +97,99 @@ def build_catalog_message(accounts: list[dict]) -> tuple[str, InlineKeyboardMark
             f"   💰 Цена: <b>{price_str}</b>\n"
         )
 
-        # Кнопка "Купить" для каждого аккаунта
         buttons.append([
             InlineKeyboardButton(
-                text=f"🛒 Купить #{i} — {acc['masked_email']} ({price_str})",
-                url=f"https://t.me/{SELLER_USERNAME}?text=Хочу купить аккаунт {acc['masked_email']} ({acc['ip_count']} IP, {price_str})",
+                text=f"🛒 Купить #{i} — {acc['masked_email']}",
+                url=f"https://t.me/{SELLER_USERNAME}?text=Хочу купить аккаунт {acc['masked_email']} ({acc['ip_count']} IP)",
             )
         ])
 
+    # Кнопка "Назад"
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")])
+
     text = "\n".join(lines)
-    text += "\n\n💬 Нажмите «Купить» для связи с продавцом."
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
-    return text, keyboard
-
-
-@router.message(CommandStart())
-async def cmd_start(message: Message):
-    """Команда /start — приветствие."""
-    await message.answer(
-        "👋 Добро пожаловать!\n\n"
-        "Здесь можно купить VK Cloud аккаунты с Floating IP.\n\n"
-        "📋 /catalog — посмотреть доступные аккаунты",
-        parse_mode="HTML",
-    )
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-@router.message(F.text.lower().in_(("/catalog", "/каталог", "каталог", "catalog")))
+# ─── Каталог аренды ───────────────────────────────────────────
+
+@router.callback_query(F.data == "menu:rent")
+async def cb_rent(callback: CallbackQuery):
+    """Каталог проектов на аренду."""
+    await callback.answer()
+
+    data = await api_get("/api/bot/rentals")
+    projects = data.get("projects", [])
+
+    if not projects:
+        await callback.message.answer("😔 Сейчас нет проектов для аренды.\n\nЗагляните позже!")
+        return
+
+    lines = ["📦 <b>Проекты на аренду</b>\n"]
+    buttons = []
+
+    for i, proj in enumerate(projects, 1):
+        ip_list = ", ".join(proj["ips"][:3])
+        if len(proj["ips"]) > 3:
+            ip_list += f" (+{len(proj['ips']) - 3})"
+
+        price_str = f"{proj['price']}₽/сут" if proj["price"] else "500₽/сут"
+
+        lines.append(
+            f"<b>{i}. {proj['masked_project']}</b>\n"
+            f"   🌐 IP ({proj['ip_count']}): <code>{ip_list}</code>\n"
+            f"   💰 Цена: <b>{price_str}</b>\n"
+        )
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📦 Арендовать #{i} — {proj['masked_project']}",
+                url=f"https://t.me/{SELLER_USERNAME}?text=Хочу арендовать проект {proj['masked_project']} ({proj['ip_count']} IP)",
+            )
+        ])
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="menu:back")])
+
+    text = "\n".join(lines)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+# ─── Назад в меню ─────────────────────────────────────────────
+
+@router.callback_query(F.data == "menu:back")
+async def cb_back(callback: CallbackQuery):
+    """Вернуться в главное меню."""
+    await callback.answer()
+    await cmd_start(callback.message)
+
+
+# ─── Текстовые команды (фоллбэк) ─────────────────────────────
+
+@router.message(F.text.lower().in_(("/catalog", "/каталог", "каталог", "купить")))
 async def cmd_catalog(message: Message):
-    """Показать каталог аккаунтов на продажу."""
-    await message.answer("⏳ Загружаю каталог...")
+    """Текстовая команда каталога."""
+    data = await api_get("/api/bot/accounts")
+    accounts = data.get("accounts", [])
 
-    accounts = await fetch_accounts()
-    text, keyboard = build_catalog_message(accounts)
+    if not accounts:
+        await message.answer("😔 Сейчас нет аккаунтов в продаже.")
+        return
 
-    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    # Пересылаем на callback-логику через фейковое сообщение
+    await cmd_start(message)
 
+
+@router.message(F.text.lower().in_(("/rent", "/аренда", "аренда")))
+async def cmd_rent(message: Message):
+    """Текстовая команда аренды."""
+    await cmd_start(message)
+
+
+# ─── Запуск ───────────────────────────────────────────────────
 
 async def main():
     if not BOT_TOKEN:
