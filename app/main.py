@@ -798,6 +798,7 @@ async def projects_page(request: Request):
         "scripts_total": scripts_total,
         "servers_scripts": servers_scripts_info,
         "ip_tenant_map": ip_tenant_map,
+        "tenants": [t["name"] for t in data.get("tenants", [])],
         "sales": sales,
         "rentals": rentals,
         "pricing": pricing,

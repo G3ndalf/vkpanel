@@ -189,10 +189,12 @@
         {% if project.ips %}
         <div class="ip-grid">
             {% for ip in project.ips %}
-            <div class="ip-item {{ 'attached' if ip.attached else 'free' }}">
+            <div class="ip-item {{ 'attached' if ip.attached else 'free' }}" style="cursor: pointer; position: relative;" onclick="openTenantMenu(event, '{{ ip.ip }}', '{{ ip_tenant_map.get(ip.ip, '') }}')">
                 <code class="ip-address">{{ ip.ip }}</code>
                 {% if ip_tenant_map.get(ip.ip) %}
                 <span style="font-size: 0.65rem; color: #f59e0b;">👤 {{ ip_tenant_map[ip.ip] }}</span>
+                {% else %}
+                <span style="font-size: 0.65rem; color: #64748b;">🔗 привязать</span>
                 {% endif %}
                 {% if ip.server_name %}
                 <span class="ip-server">{{ ip.server_name }}</span>
@@ -338,7 +340,36 @@
         grid-template-columns: 1fr !important;
     }
 }
+
+/* Меню привязки арендатора */
+.tenant-menu {
+    position: fixed;
+    background: #1e293b;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 0.4rem 0;
+    min-width: 180px;
+    z-index: 2000;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    max-height: 300px;
+    overflow-y: auto;
+}
+.tenant-menu-item {
+    padding: 0.5rem 1rem;
+    color: #e2e8f0;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.1s;
+}
+.tenant-menu-item:hover { background: rgba(245,158,11,0.15); }
+.tenant-menu-item.active { color: #f59e0b; font-weight: 600; }
+.tenant-menu-item.danger { color: #ef4444; }
+.tenant-menu-item.danger:hover { background: rgba(239,68,68,0.15); }
+.tenant-menu-sep { height: 1px; background: #334155; margin: 0.3rem 0; }
 </style>
+
+<!-- Контекстное меню привязки арендатора -->
+<div id="tenant-menu" class="tenant-menu" style="display:none;"></div>
 {% endblock %}
 
 {% block scripts %}
@@ -602,10 +633,100 @@ function editPricing(type) {
         .catch(e => showToast('Ошибка: ' + e.message, 'error'));
 }
 
+// ─── Привязка IP к арендатору ──────────────────
+const TENANTS = {{ tenants | tojson }};
+let tenantMenuIp = null;
+
+function openTenantMenu(event, ip, currentTenant) {
+    event.stopPropagation();
+    tenantMenuIp = ip;
+    const menu = document.getElementById('tenant-menu');
+    
+    let html = `<div style="padding: 0.4rem 1rem; color: #94a3b8; font-size: 0.75rem; font-weight: 600;">🔗 ${ip}</div>`;
+    html += '<div class="tenant-menu-sep"></div>';
+    
+    if (currentTenant) {
+        html += `<div class="tenant-menu-item danger" onclick="unassignIp('${ip}', '${currentTenant}')">✕ Отвязать от ${currentTenant}</div>`;
+        html += '<div class="tenant-menu-sep"></div>';
+    }
+    
+    if (TENANTS.length === 0) {
+        html += '<div style="padding: 0.5rem 1rem; color: #64748b; font-size: 0.8rem;">Нет арендаторов</div>';
+    } else {
+        for (const t of TENANTS) {
+            const isActive = t === currentTenant;
+            html += `<div class="tenant-menu-item ${isActive ? 'active' : ''}" onclick="assignIp('${ip}', '${t}')">${isActive ? '✓ ' : ''}👤 ${t}</div>`;
+        }
+    }
+    
+    menu.innerHTML = html;
+    menu.style.display = 'block';
+    
+    // Позиционирование
+    const rect = event.currentTarget.getBoundingClientRect();
+    let top = rect.bottom + 4;
+    let left = rect.left;
+    
+    // Не выходить за экран
+    const menuRect = menu.getBoundingClientRect();
+    if (top + menuRect.height > window.innerHeight) top = rect.top - menuRect.height - 4;
+    if (left + 180 > window.innerWidth) left = window.innerWidth - 190;
+    
+    menu.style.top = top + 'px';
+    menu.style.left = left + 'px';
+}
+
+function closeTenantMenu() {
+    document.getElementById('tenant-menu').style.display = 'none';
+    tenantMenuIp = null;
+}
+
+async function assignIp(ip, tenantName) {
+    closeTenantMenu();
+    const formData = new FormData();
+    formData.append('ip', ip);
+    
+    try {
+        const res = await fetch(`/api/tenants/${encodeURIComponent(tenantName)}/assign-ip`, {
+            method: 'POST', body: formData, credentials: 'same-origin'
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(`${ip} → ${tenantName}`, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + data.error, 'error');
+        }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function unassignIp(ip, tenantName) {
+    closeTenantMenu();
+    const formData = new FormData();
+    formData.append('ip', ip);
+    
+    try {
+        const res = await fetch(`/api/tenants/${encodeURIComponent(tenantName)}/unassign-ip`, {
+            method: 'POST', body: formData, credentials: 'same-origin'
+        });
+        const data = await res.json();
+        if (data.ok) {
+            showToast(`${ip} отвязан от ${tenantName}`, 'success');
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showToast('Ошибка: ' + data.error, 'error');
+        }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// Закрытие меню по клику вне
+document.addEventListener('click', () => closeTenantMenu());
+
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAddModal();
         closeScriptModal();
+        closeTenantMenu();
     }
 });
 </script>
