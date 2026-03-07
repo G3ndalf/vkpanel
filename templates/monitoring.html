@@ -116,10 +116,13 @@
     </div>
     <!-- Инфо о проверках -->
     {% if tenant.last_check or tenant.last_traffic_at %}
-    <div class="tenant-body" id="info-{{ tenant.name }}" style="margin-top: 0.5rem; font-size: 0.7rem; color: #64748b;">
-        {% if tenant.last_check %}Проверка: {{ tenant.last_check[:16].replace('T', ' ') }}{% endif %}
-        {% if tenant.last_check and tenant.last_traffic_at %} · {% endif %}
-        {% if tenant.last_traffic_at %}Трафик: {{ tenant.last_traffic_at[:16].replace('T', ' ') }}{% if tenant.last_traffic_days %} (за {{ tenant.last_traffic_days }} дн.){% endif %}{% endif %}
+    <div class="tenant-body" id="info-{{ tenant.name }}" style="display: flex; gap: 1rem; margin-top: 0.5rem; font-size: 0.8rem; flex-wrap: wrap;">
+        {% if tenant.last_check %}
+        <span style="color: #94a3b8;">🔍 Проверка: <strong style="color: #e2e8f0;">{{ tenant.last_check[:16].replace('T', ' ') }}</strong></span>
+        {% endif %}
+        {% if tenant.last_traffic_at %}
+        <span style="color: #94a3b8;">📈 Трафик: <strong style="color: #e2e8f0;">{{ tenant.last_traffic_at[:16].replace('T', ' ') }}</strong>{% if tenant.last_traffic_days %} <span style="color: #f59e0b;">(за {{ tenant.last_traffic_days }} дн.)</span>{% endif %}</span>
+        {% endif %}
     </div>
     {% endif %}
     <!-- Итоги арендатора -->
