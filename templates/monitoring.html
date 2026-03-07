@@ -57,14 +57,14 @@
                     <th>SSH user</th>
                     <th>SSH ключ</th>
                     <th>Агент</th>
-                    <th>Статус</th>
-                    <th>Исх. трафик</th>
+                    <th style="cursor:pointer;user-select:none;" onclick="sortTable(this, 'status')">Статус <span class="sort-icon">⇅</span></th>
+                    <th style="cursor:pointer;user-select:none;" onclick="sortTable(this, 'traffic')">Исх. трафик <span class="sort-icon">⇅</span></th>
                     <th>Действия</th>
                 </tr>
             </thead>
             <tbody>
                 {% for ip in tenant.ips %}
-                <tr id="row-{{ ip.ip.replace('.', '-') }}">
+                <tr id="row-{{ ip.ip.replace('.', '-') }}" data-status="{{ 1 if ip.is_reachable == true else (0 if ip.is_reachable == false else -1) }}" data-traffic="{{ ip.last_traffic.total_tx_gb if ip.last_traffic else 0 }}">
                     <td><code class="ip-code">{{ ip.ip }}</code></td>
                     <td>
                         <span class="ssh-user-display" id="user-{{ ip.ip.replace('.', '-') }}" onclick="editSshUser('{{ ip.ip }}', this)" style="cursor: pointer; border-bottom: 1px dashed #64748b;" title="Нажмите для изменения">{{ ip.ssh_user }}</span>
@@ -526,6 +526,30 @@ function updateTimeAgo() {
 }
 updateTimeAgo();
 setInterval(updateTimeAgo, 60000);
+
+// ─── Сортировка таблицы ──────────────────────
+function sortTable(th, key) {
+    const table = th.closest('table');
+    const tbody = table.querySelector('tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const icon = th.querySelector('.sort-icon');
+
+    // Определяем направление
+    const asc = th.dataset.sortDir !== 'asc';
+    th.dataset.sortDir = asc ? 'asc' : 'desc';
+
+    // Сбросить иконки в этой таблице
+    table.querySelectorAll('.sort-icon').forEach(s => s.textContent = '⇅');
+    icon.textContent = asc ? '↑' : '↓';
+
+    rows.sort((a, b) => {
+        const va = parseFloat(a.dataset[key]) || 0;
+        const vb = parseFloat(b.dataset[key]) || 0;
+        return asc ? vb - va : va - vb;
+    });
+
+    rows.forEach(r => tbody.appendChild(r));
+}
 
 // ─── Клавиатура ──────────────────────────────
 document.addEventListener('keydown', (e) => {
