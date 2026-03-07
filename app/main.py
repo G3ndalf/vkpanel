@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException, Form
+from fastapi import FastAPI, Request, HTTPException, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +26,10 @@ from .data import (
 )
 from .ssh import get_script_status, control_script, get_floating_ips_via_cli, change_script_project, ssh_connect, ssh_exec
 from .openstack import get_project_floating_ips
+from .monitoring import (
+    save_ssh_key, get_ssh_key_path, get_ssh_user,
+    check_ssh_reachable, deploy_agent, collect_traffic, get_tenant_ips,
+)
 
 # ─── Логирование ──────────────────────────────────────────────
 
@@ -1533,6 +1537,445 @@ async def api_bot_rentals(request: Request):
 
     result.sort(key=lambda x: -x["ip_count"])
     return {"projects": result, "price_per_ip": pricing_rent}
+
+
+# ─── Мониторинг трафика ────────────────────────────────────────
+
+@app.get("/monitoring", response_class=HTMLResponse)
+async def monitoring_page(request: Request):
+    """Страница мониторинга трафика арендаторов."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    data = load_data()
+    tenants = data.get("tenants", [])
+    monitoring = data.get("monitoring", {})
+    ip_status = monitoring.get("ip_status", {})
+    ssh_keys = monitoring.get("ssh_keys", {})
+    ip_ssh_keys = monitoring.get("ip_ssh_keys", {})
+    ip_ssh_users = monitoring.get("ip_ssh_users", {})
+    traffic_data = monitoring.get("traffic_data", {})
+
+    # Обогащаем данные арендаторов информацией мониторинга
+    tenants_enriched = []
+    total_ips = 0
+    deployed_count = 0
+    reachable_count = 0
+
+    for t in tenants:
+        ips_info = []
+        has_tenant_key = t["name"] in ssh_keys
+        for ip_addr in t.get("ips", []):
+            total_ips += 1
+            status = ip_status.get(ip_addr, {})
+            has_ip_key = ip_addr in ip_ssh_keys
+            ssh_user = ip_ssh_users.get(ip_addr, "root")
+            last_traffic = traffic_data.get(ip_addr)
+
+            if status.get("agent_deployed"):
+                deployed_count += 1
+            if status.get("is_reachable"):
+                reachable_count += 1
+
+            ips_info.append({
+                "ip": ip_addr,
+                "ssh_user": ssh_user,
+                "has_key": has_ip_key or has_tenant_key,
+                "has_own_key": has_ip_key,
+                "agent_deployed": status.get("agent_deployed", False),
+                "is_reachable": status.get("is_reachable"),
+                "last_check": status.get("last_check"),
+                "last_traffic": last_traffic,
+            })
+        tenants_enriched.append({
+            "name": t["name"],
+            "ips": ips_info,
+            "has_key": has_tenant_key,
+        })
+
+    return templates.TemplateResponse("monitoring.html", {
+        "request": request,
+        "user": user,
+        "tenants": tenants_enriched,
+        "total_ips": total_ips,
+        "deployed_count": deployed_count,
+        "reachable_count": reachable_count,
+    })
+
+
+@app.post("/api/monitoring/ssh-key/tenant/{tenant_name}")
+async def api_monitoring_ssh_key_tenant(
+    request: Request, tenant_name: str, file: UploadFile = File(...)
+):
+    """Загрузить SSH ключ для арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    content = await file.read()
+    if len(content) > 50_000:
+        return JSONResponse({"ok": False, "error": "Файл слишком большой"}, status_code=400)
+
+    path = save_ssh_key(f"tenant_{tenant_name}", content)
+
+    data = load_data()
+    monitoring = data.setdefault("monitoring", {})
+    ssh_keys = monitoring.setdefault("ssh_keys", {})
+    ssh_keys[tenant_name] = {
+        "key_path": path,
+        "uploaded_at": datetime.utcnow().isoformat(),
+    }
+    save_data(data)
+
+    return JSONResponse({"ok": True, "message": f"SSH ключ загружен для {tenant_name}"})
+
+
+@app.post("/api/monitoring/ssh-key/ip/{ip:path}")
+async def api_monitoring_ssh_key_ip(
+    request: Request, ip: str, file: UploadFile = File(...)
+):
+    """Загрузить SSH ключ для конкретного IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    content = await file.read()
+    if len(content) > 50_000:
+        return JSONResponse({"ok": False, "error": "Файл слишком большой"}, status_code=400)
+
+    path = save_ssh_key(ip.replace(".", "_"), content)
+
+    data = load_data()
+    monitoring = data.setdefault("monitoring", {})
+    ip_keys = monitoring.setdefault("ip_ssh_keys", {})
+    ip_keys[ip] = {
+        "key_path": path,
+        "uploaded_at": datetime.utcnow().isoformat(),
+    }
+    save_data(data)
+
+    return JSONResponse({"ok": True, "message": f"SSH ключ загружен для {ip}"})
+
+
+@app.post("/api/monitoring/ssh-user/ip/{ip:path}")
+async def api_monitoring_ssh_user(request: Request, ip: str, ssh_user: str = Form("root")):
+    """Установить SSH пользователя для IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    monitoring = data.setdefault("monitoring", {})
+    users = monitoring.setdefault("ip_ssh_users", {})
+    users[ip] = ssh_user
+    save_data(data)
+
+    return JSONResponse({"ok": True, "message": f"SSH user для {ip}: {ssh_user}"})
+
+
+@app.post("/api/monitoring/deploy/ip/{ip:path}")
+async def api_monitoring_deploy_ip(request: Request, ip: str):
+    """Развернуть агент мониторинга на одном IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+
+    # Определяем арендатора для этого IP
+    tenant_name = None
+    for t in data.get("tenants", []):
+        if ip in t.get("ips", []):
+            tenant_name = t["name"]
+            break
+
+    key_path = get_ssh_key_path(data, ip, tenant_name)
+    if not key_path:
+        return JSONResponse({"ok": False, "error": f"SSH ключ не найден для {ip}"}, status_code=400)
+
+    ssh_user = get_ssh_user(data, ip)
+
+    # Определяем URL панели для агента
+    panel_url = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
+    scheme = request.headers.get("X-Forwarded-Proto", "http")
+    if panel_url:
+        panel_url = f"{scheme}://{panel_url}"
+    else:
+        panel_url = str(request.base_url).rstrip("/")
+
+    result = deploy_agent(ip, key_path, ssh_user, panel_url)
+
+    if result["ok"]:
+        # Сохраняем статус и API ключ
+        monitoring = data.setdefault("monitoring", {})
+        ip_status = monitoring.setdefault("ip_status", {})
+        ip_status.setdefault(ip, {})["agent_deployed"] = True
+        ip_status[ip]["api_key"] = result["api_key"]
+        ip_status[ip]["deployed_at"] = datetime.utcnow().isoformat()
+
+        # Сохраняем маппинг api_key -> ip для приёма отчётов
+        api_keys = monitoring.setdefault("api_keys", {})
+        api_keys[result["api_key"]] = ip
+
+        save_data(data)
+
+    return JSONResponse({"ok": result["ok"], "message": result["message"]})
+
+
+@app.post("/api/monitoring/deploy/tenant/{tenant_name}")
+async def api_monitoring_deploy_tenant(request: Request, tenant_name: str):
+    """Развернуть агент на все IP арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    ips = get_tenant_ips(data, tenant_name)
+    if not ips:
+        return JSONResponse({"ok": False, "error": "У арендатора нет IP"}, status_code=400)
+
+    # Определяем URL панели
+    panel_url = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
+    scheme = request.headers.get("X-Forwarded-Proto", "http")
+    if panel_url:
+        panel_url = f"{scheme}://{panel_url}"
+    else:
+        panel_url = str(request.base_url).rstrip("/")
+
+    def deploy_one(ip: str) -> dict:
+        key_path = get_ssh_key_path(data, ip, tenant_name)
+        if not key_path:
+            return {"ip": ip, "ok": False, "message": "SSH ключ не найден"}
+        ssh_user = get_ssh_user(data, ip)
+        result = deploy_agent(ip, key_path, ssh_user, panel_url)
+        return {"ip": ip, **result}
+
+    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
+        results = list(executor.map(deploy_one, ips))
+
+    # Сохраняем статусы
+    monitoring = data.setdefault("monitoring", {})
+    ip_status = monitoring.setdefault("ip_status", {})
+    api_keys = monitoring.setdefault("api_keys", {})
+
+    for r in results:
+        if r["ok"]:
+            ip_status.setdefault(r["ip"], {})["agent_deployed"] = True
+            ip_status[r["ip"]]["api_key"] = r.get("api_key", "")
+            ip_status[r["ip"]]["deployed_at"] = datetime.utcnow().isoformat()
+            if r.get("api_key"):
+                api_keys[r["api_key"]] = r["ip"]
+    save_data(data)
+
+    ok_count = sum(1 for r in results if r["ok"])
+    return JSONResponse({
+        "ok": ok_count > 0,
+        "message": f"Развёрнуто: {ok_count}/{len(results)}",
+        "results": results,
+    })
+
+
+@app.post("/api/monitoring/check/ip/{ip:path}")
+async def api_monitoring_check_ip(request: Request, ip: str):
+    """Проверить доступность одного IP по SSH."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    tenant_name = None
+    for t in data.get("tenants", []):
+        if ip in t.get("ips", []):
+            tenant_name = t["name"]
+            break
+
+    key_path = get_ssh_key_path(data, ip, tenant_name)
+    if not key_path:
+        return JSONResponse({"ok": False, "error": "SSH ключ не найден"}, status_code=400)
+
+    ssh_user = get_ssh_user(data, ip)
+    result = check_ssh_reachable(ip, key_path, ssh_user)
+
+    # Сохраняем результат
+    monitoring = data.setdefault("monitoring", {})
+    ip_status = monitoring.setdefault("ip_status", {})
+    ip_status.setdefault(ip, {})["is_reachable"] = result["reachable"]
+    ip_status[ip]["last_check"] = datetime.utcnow().isoformat()
+    save_data(data)
+
+    return JSONResponse({
+        "ok": True,
+        "ip": ip,
+        "reachable": result["reachable"],
+        "error": result.get("error"),
+    })
+
+
+@app.post("/api/monitoring/check/tenant/{tenant_name}")
+async def api_monitoring_check_tenant(request: Request, tenant_name: str):
+    """Проверить доступность всех IP арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    ips = get_tenant_ips(data, tenant_name)
+    if not ips:
+        return JSONResponse({"ok": False, "error": "У арендатора нет IP"}, status_code=400)
+
+    def check_one(ip: str) -> dict:
+        key_path = get_ssh_key_path(data, ip, tenant_name)
+        if not key_path:
+            return {"ip": ip, "reachable": False, "error": "SSH ключ не найден"}
+        ssh_user = get_ssh_user(data, ip)
+        result = check_ssh_reachable(ip, key_path, ssh_user)
+        return {"ip": ip, **result}
+
+    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
+        results = list(executor.map(check_one, ips))
+
+    # Сохраняем результаты
+    monitoring = data.setdefault("monitoring", {})
+    ip_status = monitoring.setdefault("ip_status", {})
+    now = datetime.utcnow().isoformat()
+    for r in results:
+        ip_status.setdefault(r["ip"], {})["is_reachable"] = r["reachable"]
+        ip_status[r["ip"]]["last_check"] = now
+    save_data(data)
+
+    reachable = sum(1 for r in results if r["reachable"])
+    return JSONResponse({
+        "ok": True,
+        "message": f"Доступно: {reachable}/{len(results)}",
+        "results": results,
+    })
+
+
+@app.post("/api/monitoring/traffic/ip/{ip:path}")
+async def api_monitoring_traffic_ip(request: Request, ip: str, days: int = Form(1)):
+    """Собрать трафик с одного сервера."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    tenant_name = None
+    for t in data.get("tenants", []):
+        if ip in t.get("ips", []):
+            tenant_name = t["name"]
+            break
+
+    key_path = get_ssh_key_path(data, ip, tenant_name)
+    if not key_path:
+        return JSONResponse({"ok": False, "error": "SSH ключ не найден"}, status_code=400)
+
+    ssh_user = get_ssh_user(data, ip)
+    result = collect_traffic(ip, key_path, ssh_user, days)
+
+    if result["ok"]:
+        # Сохраняем данные трафика
+        monitoring = data.setdefault("monitoring", {})
+        traffic_data = monitoring.setdefault("traffic_data", {})
+        traffic_data[ip] = {
+            "collected_at": datetime.utcnow().isoformat(),
+            "total_rx_gb": result["total_rx_gb"],
+            "total_tx_gb": result["total_tx_gb"],
+            "total_gb": result["total_gb"],
+            "interfaces": result["traffic"],
+        }
+        save_data(data)
+
+    return JSONResponse(result)
+
+
+@app.post("/api/monitoring/traffic/tenant/{tenant_name}")
+async def api_monitoring_traffic_tenant(request: Request, tenant_name: str, days: int = Form(1)):
+    """Собрать трафик со всех серверов арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    ips = get_tenant_ips(data, tenant_name)
+    if not ips:
+        return JSONResponse({"ok": False, "error": "У арендатора нет IP"}, status_code=400)
+
+    def collect_one(ip: str) -> dict:
+        key_path = get_ssh_key_path(data, ip, tenant_name)
+        if not key_path:
+            return {"ip": ip, "ok": False, "error": "SSH ключ не найден", "total_gb": 0}
+        ssh_user = get_ssh_user(data, ip)
+        result = collect_traffic(ip, key_path, ssh_user, days)
+        return {"ip": ip, **result}
+
+    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
+        results = list(executor.map(collect_one, ips))
+
+    # Сохраняем и суммируем
+    monitoring = data.setdefault("monitoring", {})
+    traffic_data = monitoring.setdefault("traffic_data", {})
+    total_gb = 0
+
+    for r in results:
+        if r.get("ok"):
+            traffic_data[r["ip"]] = {
+                "collected_at": datetime.utcnow().isoformat(),
+                "total_rx_gb": r.get("total_rx_gb", 0),
+                "total_tx_gb": r.get("total_tx_gb", 0),
+                "total_gb": r.get("total_gb", 0),
+                "interfaces": r.get("traffic", {}),
+            }
+            total_gb += r.get("total_gb", 0)
+    save_data(data)
+
+    ok_count = sum(1 for r in results if r.get("ok"))
+    return JSONResponse({
+        "ok": ok_count > 0,
+        "message": f"Собрано с {ok_count}/{len(results)} серверов. Общий трафик: {round(total_gb, 2)} ГБ",
+        "total_gb": round(total_gb, 2),
+        "results": results,
+    })
+
+
+@app.post("/api/v1/report")
+async def api_v1_report(request: Request):
+    """Приём отчётов от агентов мониторинга (ночной cron)."""
+    api_key = request.headers.get("X-API-Key", "")
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
+    data = load_data()
+    monitoring = data.get("monitoring", {})
+    api_keys = monitoring.get("api_keys", {})
+
+    ip = api_keys.get(api_key)
+    if not ip:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    interfaces = body.get("interfaces", {})
+    if not interfaces:
+        raise HTTPException(status_code=400, detail="No interface data")
+
+    # Сохраняем данные трафика
+    traffic_data = monitoring.setdefault("traffic_data", {})
+    total_rx = sum(v.get("rx_bytes", 0) for v in interfaces.values())
+    total_tx = sum(v.get("tx_bytes", 0) for v in interfaces.values())
+
+    traffic_data[ip] = {
+        "collected_at": datetime.utcnow().isoformat(),
+        "total_rx_gb": round(total_rx / (1024**3), 2),
+        "total_tx_gb": round(total_tx / (1024**3), 2),
+        "total_gb": round((total_rx + total_tx) / (1024**3), 2),
+        "interfaces": interfaces,
+        "source": "agent",
+    }
+
+    # Обновляем статус
+    ip_status = monitoring.setdefault("ip_status", {})
+    ip_status.setdefault(ip, {})["last_report"] = datetime.utcnow().isoformat()
+    ip_status[ip]["is_reachable"] = True
+
+    save_data(data)
+    logger.info(f"Traffic report from {ip}: {len(interfaces)} interfaces")
+
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

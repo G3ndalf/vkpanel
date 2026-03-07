@@ -386,6 +386,7 @@
             <a href="/servers" class="{{ 'active' if '/servers' in request.url.path else '' }}">Серверы</a>
             <a href="/projects" class="{{ 'active' if request.url.path == '/projects' else '' }}">📁 Проекты</a>
             <a href="/tenants" class="{{ 'active' if request.url.path == '/tenants' else '' }}">👥 Арендаторы</a>
+            <a href="/monitoring" class="{{ 'active' if request.url.path == '/monitoring' else '' }}">📊 Мониторинг</a>
             <a href="/logs" class="{{ 'active' if request.url.path == '/logs' else '' }}">📜 Логи</a>
             <a href="/logout">Выйти</a>
         </nav>

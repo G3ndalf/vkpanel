@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+
+{% block title %}Мониторинг — VK IP Panel{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.75rem;">
+    <h1>📊 Мониторинг трафика</h1>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">Всего IP</div>
+        <div class="value">{{ total_ips }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Агент развёрнут</div>
+        <div class="value" style="color: #10b981;">{{ deployed_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Доступно</div>
+        <div class="value" style="color: #3b82f6;">{{ reachable_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Недоступно</div>
+        <div class="value" style="color: #ef4444;">{{ total_ips - reachable_count }}</div>
+    </div>
+</div>
+
+{% for tenant in tenants %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <!-- Заголовок арендатора -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #334155; flex-wrap: wrap; gap: 0.5rem;">
+        <h2 style="margin: 0;">
+            👤 {{ tenant.name }}
+            <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">— {{ tenant.ips|length }} IP</span>
+            {% if tenant.has_key %}
+            <span class="badge badge-green" style="font-size: 0.7rem; margin-left: 0.5rem;">🔑 SSH ключ</span>
+            {% endif %}
+        </h2>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <label class="btn btn-secondary btn-sm" style="cursor: pointer;">
+                🔑 SSH ключ
+                <input type="file" accept=".pem,.key" style="display:none;" onchange="uploadTenantKey('{{ tenant.name }}', this)">
+            </label>
+            <button class="btn btn-primary btn-sm" onclick="deployTenant('{{ tenant.name }}')">🚀 Развернуть мониторинг</button>
+            <button class="btn btn-secondary btn-sm" onclick="checkTenant('{{ tenant.name }}')">🔍 Проверить</button>
+            <button class="btn btn-secondary btn-sm" onclick="openTrafficModal('{{ tenant.name }}', null)">📈 Сбор трафика</button>
+        </div>
+    </div>
+
+    {% if tenant.ips %}
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>IP адрес</th>
+                    <th>SSH user</th>
+                    <th>SSH ключ</th>
+                    <th>Агент</th>
+                    <th>Статус</th>
+                    <th>Трафик</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ip in tenant.ips %}
+                <tr id="row-{{ ip.ip.replace('.', '-') }}">
+                    <td><code class="ip-code">{{ ip.ip }}</code></td>
+                    <td>
+                        <span class="ssh-user-display" id="user-{{ ip.ip.replace('.', '-') }}" onclick="editSshUser('{{ ip.ip }}', this)" style="cursor: pointer; border-bottom: 1px dashed #64748b;" title="Нажмите для изменения">{{ ip.ssh_user }}</span>
+                    </td>
+                    <td>
+                        {% if ip.has_key %}
+                        <span class="badge badge-green">✓ Есть{% if ip.has_own_key %} (свой){% endif %}</span>
+                        {% else %}
+                        <label class="badge badge-red" style="cursor: pointer;">
+                            ✕ Нет
+                            <input type="file" accept=".pem,.key" style="display:none;" onchange="uploadIpKey('{{ ip.ip }}', this)">
+                        </label>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if ip.agent_deployed %}
+                        <span class="badge badge-green">✓ Да</span>
+                        {% else %}
+                        <span class="badge badge-red">✕ Нет</span>
+                        {% endif %}
+                    </td>
+                    <td id="status-{{ ip.ip.replace('.', '-') }}">
+                        {% if ip.is_reachable == true %}
+                        <span class="badge badge-green">🟢 Онлайн</span>
+                        {% elif ip.is_reachable == false %}
+                        <span class="badge badge-red">🔴 Офлайн</span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(100,116,139,0.2); color: #94a3b8;">⚪ Не проверен</span>
+                        {% endif %}
+                        {% if ip.last_check %}
+                        <div style="font-size: 0.65rem; color: #64748b; margin-top: 0.15rem;">{{ ip.last_check[:16] }}</div>
+                        {% endif %}
+                    </td>
+                    <td id="traffic-{{ ip.ip.replace('.', '-') }}">
+                        {% if ip.last_traffic %}
+                        <div style="font-size: 0.85rem;">
+                            <span style="color: #10b981;">↓ {{ ip.last_traffic.total_rx_gb }} ГБ</span>
+                            <span style="color: #3b82f6;">↑ {{ ip.last_traffic.total_tx_gb }} ГБ</span>
+                        </div>
+                        <div style="font-size: 0.7rem; color: #64748b;">Всего: {{ ip.last_traffic.total_gb }} ГБ</div>
+                        {% else %}
+                        <span style="color: #64748b; font-size: 0.85rem;">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="actions" style="flex-wrap: wrap;">
+                            <button class="btn btn-primary btn-sm" onclick="deployIp('{{ ip.ip }}')" title="Развернуть агент">🚀</button>
+                            <button class="btn btn-secondary btn-sm" onclick="checkIp('{{ ip.ip }}')" title="Проверить доступность">🔍</button>
+                            <button class="btn btn-secondary btn-sm" onclick="openTrafficModal(null, '{{ ip.ip }}')" title="Сбор трафика">📈</button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="color: #64748b; font-size: 0.9rem;">Нет IP у арендатора. Привяжите IP на вкладке "Арендаторы".</div>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% if not tenants %}
+<div class="card">
+    <div class="empty">
+        <p>Арендаторов пока нет</p>
+        <p style="margin-top: 0.5rem; font-size: 0.9rem; color: #64748b;">Создайте арендаторов и привяжите IP на вкладке <a href="/tenants" style="color: #f59e0b;">Арендаторы</a></p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Модалка сбора трафика -->
+<div id="traffic-modal" class="modal" onclick="if(event.target.id==='traffic-modal') closeTrafficModal();">
+    <div class="modal-content" style="max-width: 400px;">
+        <div class="modal-header">
+            <h3>📈 Сбор трафика</h3>
+            <button class="modal-close" onclick="closeTrafficModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <p style="color: #94a3b8; margin-bottom: 1rem;" id="traffic-target-label"></p>
+            <form onsubmit="submitTraffic(event)">
+                <div class="form-group">
+                    <label>Количество дней</label>
+                    <input type="number" id="traffic-days" value="5" min="1" max="365" required>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeTrafficModal()">Отмена</button>
+                    <button type="submit" class="btn btn-primary" id="traffic-submit-btn">Собрать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка SSH user -->
+<div id="ssh-user-modal" class="modal" onclick="if(event.target.id==='ssh-user-modal') closeSshUserModal();">
+    <div class="modal-content" style="max-width: 350px;">
+        <div class="modal-header">
+            <h3>👤 SSH пользователь</h3>
+            <button class="modal-close" onclick="closeSshUserModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <form onsubmit="submitSshUser(event)">
+                <div class="form-group">
+                    <label>Пользователь для <code id="ssh-user-ip"></code></label>
+                    <input type="text" id="ssh-user-input" placeholder="root" required>
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeSshUserModal()">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+}
+.modal.active { display: flex; }
+.modal-content {
+    background: #1e293b;
+    border-radius: 12px;
+    width: 90%;
+    max-height: 85vh;
+    overflow: hidden;
+    border: 1px solid #334155;
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #334155;
+}
+.modal-header h3 { margin: 0; font-size: 1.1rem; }
+.modal-close {
+    background: none; border: none;
+    color: #64748b; font-size: 1.5rem;
+    cursor: pointer; padding: 0; line-height: 1;
+}
+.modal-close:hover { color: #ef4444; }
+.modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    max-height: calc(85vh - 60px);
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ─── SSH ключи ───────────────────────────────
+async function uploadTenantKey(name, input) {
+    if (!input.files.length) return;
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    try {
+        const res = await fetch(`/api/monitoring/ssh-key/tenant/${encodeURIComponent(name)}`, {method: 'POST', body: formData, credentials: 'same-origin'});
+        const data = await res.json();
+        if (data.ok) { showToast(data.message, 'success'); setTimeout(() => location.reload(), 800); }
+        else showToast('Ошибка: ' + data.error, 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+    input.value = '';
+}
+
+async function uploadIpKey(ip, input) {
+    if (!input.files.length) return;
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    try {
+        const res = await fetch(`/api/monitoring/ssh-key/ip/${ip}`, {method: 'POST', body: formData, credentials: 'same-origin'});
+        const data = await res.json();
+        if (data.ok) { showToast(data.message, 'success'); setTimeout(() => location.reload(), 800); }
+        else showToast('Ошибка: ' + data.error, 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+    input.value = '';
+}
+
+// ─── SSH user ────────────────────────────────
+let currentSshUserIp = null;
+
+function editSshUser(ip, el) {
+    currentSshUserIp = ip;
+    document.getElementById('ssh-user-ip').textContent = ip;
+    document.getElementById('ssh-user-input').value = el.textContent.trim();
+    document.getElementById('ssh-user-modal').classList.add('active');
+    document.getElementById('ssh-user-input').focus();
+}
+
+function closeSshUserModal() {
+    document.getElementById('ssh-user-modal').classList.remove('active');
+    currentSshUserIp = null;
+}
+
+async function submitSshUser(e) {
+    e.preventDefault();
+    if (!currentSshUserIp) return;
+    const user = document.getElementById('ssh-user-input').value.trim();
+    const formData = new FormData();
+    formData.append('ssh_user', user);
+    try {
+        const res = await fetch(`/api/monitoring/ssh-user/ip/${currentSshUserIp}`, {method: 'POST', body: formData, credentials: 'same-origin'});
+        const data = await res.json();
+        if (data.ok) {
+            showToast(data.message, 'success');
+            const el = document.getElementById('user-' + currentSshUserIp.replace(/\./g, '-'));
+            if (el) el.textContent = user;
+            closeSshUserModal();
+        } else showToast('Ошибка: ' + data.error, 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Деплой ──────────────────────────────────
+async function deployIp(ip) {
+    if (!confirm(`Развернуть агент мониторинга на ${ip}?`)) return;
+    showToast(`Разворачиваю агент на ${ip}...`, 'info', 10000);
+    try {
+        const res = await fetch(`/api/monitoring/deploy/ip/${ip}`, {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        if (data.ok) { showToast(data.message, 'success'); setTimeout(() => location.reload(), 1000); }
+        else showToast('Ошибка: ' + data.message, 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function deployTenant(name) {
+    if (!confirm(`Развернуть агент на ВСЕ серверы арендатора "${name}"?`)) return;
+    showToast(`Разворачиваю на серверы ${name}...`, 'info', 30000);
+    try {
+        const res = await fetch(`/api/monitoring/deploy/tenant/${encodeURIComponent(name)}`, {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        if (data.ok) { showToast(data.message, 'success'); setTimeout(() => location.reload(), 1000); }
+        else showToast('Ошибка: ' + (data.message || data.error), 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Проверка доступности ────────────────────
+async function checkIp(ip) {
+    showToast(`Проверяю ${ip}...`, 'info', 5000);
+    try {
+        const res = await fetch(`/api/monitoring/check/ip/${ip}`, {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        const el = document.getElementById('status-' + ip.replace(/\./g, '-'));
+        if (data.reachable) {
+            showToast(`${ip} — онлайн ✓`, 'success');
+            if (el) el.innerHTML = '<span class="badge badge-green">🟢 Онлайн</span>';
+        } else {
+            showToast(`${ip} — офлайн: ${data.error || ''}`, 'error');
+            if (el) el.innerHTML = '<span class="badge badge-red">🔴 Офлайн</span>';
+        }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function checkTenant(name) {
+    showToast(`Проверяю серверы ${name}...`, 'info', 15000);
+    try {
+        const res = await fetch(`/api/monitoring/check/tenant/${encodeURIComponent(name)}`, {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        if (data.results) {
+            data.results.forEach(r => {
+                const el = document.getElementById('status-' + r.ip.replace(/\./g, '-'));
+                if (el) {
+                    el.innerHTML = r.reachable
+                        ? '<span class="badge badge-green">🟢 Онлайн</span>'
+                        : '<span class="badge badge-red">🔴 Офлайн</span>';
+                }
+            });
+        }
+        showToast(data.message || 'Проверка завершена', data.ok ? 'success' : 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Сбор трафика ────────────────────────────
+let trafficTenant = null;
+let trafficIp = null;
+
+function openTrafficModal(tenant, ip) {
+    trafficTenant = tenant;
+    trafficIp = ip;
+    const label = document.getElementById('traffic-target-label');
+    if (tenant) label.textContent = `Арендатор: ${tenant} (все серверы)`;
+    else label.textContent = `Сервер: ${ip}`;
+    document.getElementById('traffic-days').value = 5;
+    document.getElementById('traffic-modal').classList.add('active');
+}
+
+function closeTrafficModal() {
+    document.getElementById('traffic-modal').classList.remove('active');
+    trafficTenant = null;
+    trafficIp = null;
+}
+
+async function submitTraffic(e) {
+    e.preventDefault();
+    const days = document.getElementById('traffic-days').value;
+    const btn = document.getElementById('traffic-submit-btn');
+    btn.disabled = true; btn.classList.add('btn-loading');
+
+    let url;
+    if (trafficTenant) url = `/api/monitoring/traffic/tenant/${encodeURIComponent(trafficTenant)}`;
+    else url = `/api/monitoring/traffic/ip/${trafficIp}`;
+
+    const formData = new FormData();
+    formData.append('days', days);
+
+    try {
+        showToast('Собираю трафик...', 'info', 30000);
+        const res = await fetch(url, {method: 'POST', body: formData, credentials: 'same-origin'});
+        const data = await res.json();
+        closeTrafficModal();
+
+        if (trafficIp && data.ok) {
+            // Обновляем ячейку трафика для одного IP
+            const el = document.getElementById('traffic-' + trafficIp.replace(/\./g, '-'));
+            if (el) {
+                el.innerHTML = `
+                    <div style="font-size: 0.85rem;">
+                        <span style="color: #10b981;">↓ ${data.total_rx_gb} ГБ</span>
+                        <span style="color: #3b82f6;">↑ ${data.total_tx_gb} ГБ</span>
+                    </div>
+                    <div style="font-size: 0.7rem; color: #64748b;">Всего: ${data.total_gb} ГБ</div>`;
+            }
+        }
+
+        if (data.ok || data.message) {
+            showToast(data.message || `Трафик: ${data.total_gb} ГБ`, 'success');
+            if (trafficTenant) setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
+        }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+
+    btn.disabled = false; btn.classList.remove('btn-loading');
+}
+
+// ─── Клавиатура ──────────────────────────────
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeTrafficModal(); closeSshUserModal(); }
+});
+</script>
+{% endblock %}
