@@ -1609,6 +1609,23 @@ async def monitoring_page(request: Request):
         # Оплата: 0.5 руб за 1 ГБ исходящего трафика
         tenant_cost = round(tenant_tx_gb * 0.5, 2)
 
+        # Последнее время проверки доступности и сбора трафика (среди IP арендатора)
+        check_times = [
+            ip_status.get(ip_addr, {}).get("last_check")
+            for ip_addr in t.get("ips", [])
+            if ip_status.get(ip_addr, {}).get("last_check")
+        ]
+        traffic_times = [
+            traffic_data.get(ip_addr, {}).get("collected_at") if traffic_data.get(ip_addr) else None
+            for ip_addr in t.get("ips", [])
+        ]
+        traffic_times = [x for x in traffic_times if x]
+        traffic_days_list = [
+            traffic_data.get(ip_addr, {}).get("days") if traffic_data.get(ip_addr) else None
+            for ip_addr in t.get("ips", [])
+        ]
+        traffic_days_list = [x for x in traffic_days_list if x]
+
         tenants_enriched.append({
             "name": t["name"],
             "ips": ips_info,
@@ -1617,6 +1634,9 @@ async def monitoring_page(request: Request):
             "total_rx_tb": round(tenant_rx_gb / 1024, 3),
             "total_tb": round(tenant_total_gb / 1024, 3),
             "cost": tenant_cost,
+            "last_check": max(check_times) if check_times else None,
+            "last_traffic_at": max(traffic_times) if traffic_times else None,
+            "last_traffic_days": traffic_days_list[0] if traffic_days_list else None,
         })
 
     return templates.TemplateResponse("monitoring.html", {

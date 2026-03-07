@@ -94,16 +94,10 @@
                         {% else %}
                         <span class="badge" style="background: rgba(100,116,139,0.2); color: #94a3b8;">⚪ Не проверен</span>
                         {% endif %}
-                        {% if ip.last_check %}
-                        <div style="font-size: 0.65rem; color: #64748b; margin-top: 0.15rem;">{{ ip.last_check[:16] }}</div>
-                        {% endif %}
                     </td>
                     <td id="traffic-{{ ip.ip.replace('.', '-') }}">
                         {% if ip.last_traffic %}
                         <span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">{{ "%.3f"|format(ip.last_traffic.total_tx_gb / 1024) }} ТБ</span>
-                        {% if ip.last_traffic.collected_at %}
-                        <div style="font-size: 0.65rem; color: #64748b; margin-top: 0.15rem;">{{ ip.last_traffic.collected_at[:16].replace('T', ' ') }}{% if ip.last_traffic.days %} · за {{ ip.last_traffic.days }} дн.{% endif %}</div>
-                        {% endif %}
                         {% else %}
                         <span style="color: #64748b; font-size: 0.85rem;">—</span>
                         {% endif %}
@@ -120,8 +114,16 @@
             </tbody>
         </table>
     </div>
+    <!-- Инфо о проверках -->
+    {% if tenant.last_check or tenant.last_traffic_at %}
+    <div class="tenant-body" id="info-{{ tenant.name }}" style="margin-top: 0.5rem; font-size: 0.7rem; color: #64748b;">
+        {% if tenant.last_check %}Проверка: {{ tenant.last_check[:16].replace('T', ' ') }}{% endif %}
+        {% if tenant.last_check and tenant.last_traffic_at %} · {% endif %}
+        {% if tenant.last_traffic_at %}Трафик: {{ tenant.last_traffic_at[:16].replace('T', ' ') }}{% if tenant.last_traffic_days %} (за {{ tenant.last_traffic_days }} дн.){% endif %}{% endif %}
+    </div>
+    {% endif %}
     <!-- Итоги арендатора -->
-    <div class="tenant-body" id="summary-{{ tenant.name }}" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #334155; flex-wrap: wrap; gap: 0.75rem;">
+    <div class="tenant-body" id="summary-{{ tenant.name }}" style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid #334155; flex-wrap: wrap; gap: 0.75rem;">
         <div>
             <span style="color: #64748b; font-size: 0.8rem;">Исходящий трафик:</span>
             <span style="color: #3b82f6; font-weight: 600;">{{ tenant.total_tx_tb }} ТБ</span>
@@ -252,7 +254,7 @@
 .modal-close:hover { color: #ef4444; }
 /* Компактная таблица мониторинга */
 .card table th, .card table td {
-    padding: 0.35rem 0.75rem;
+    padding: 0.2rem 0.5rem;
 }
 .tenant-arrow {
     display: inline-block;
