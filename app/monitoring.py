@@ -134,7 +134,7 @@ if __name__ == "__main__":
 '''
 
 
-def _ssh_connect_by_key(ip: str, key_path: str, ssh_user: str = "root") -> paramiko.SSHClient:
+def _ssh_connect_by_key(ip: str, key_path: str, ssh_user: str = "ubuntu") -> paramiko.SSHClient:
     """SSH подключение по ключу."""
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -182,10 +182,10 @@ def get_ssh_key_path(data: dict, ip: str, tenant_name: Optional[str] = None) -> 
 
 def get_ssh_user(data: dict, ip: str) -> str:
     """Получить SSH пользователя для IP (по умолчанию root)."""
-    return data.get("monitoring", {}).get("ip_ssh_users", {}).get(ip, "root")
+    return data.get("monitoring", {}).get("ip_ssh_users", {}).get(ip, "ubuntu")
 
 
-def check_ssh_reachable(ip: str, key_path: str, ssh_user: str = "root") -> dict:
+def check_ssh_reachable(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:
     """Проверить доступность сервера по SSH."""
     try:
         client = _ssh_connect_by_key(ip, key_path, ssh_user)

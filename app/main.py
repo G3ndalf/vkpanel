@@ -1657,7 +1657,7 @@ async def api_monitoring_ssh_key_ip(
 
 
 @app.post("/api/monitoring/ssh-user/ip/{ip:path}")
-async def api_monitoring_ssh_user(request: Request, ip: str, ssh_user: str = Form("root")):
+async def api_monitoring_ssh_user(request: Request, ip: str, ssh_user: str = Form("ubuntu")):
     """Установить SSH пользователя для IP."""
     if not get_current_user(request):
         raise HTTPException(status_code=401)
