@@ -312,9 +312,9 @@ def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1) -> dic
             "traffic": traffic,
             "total_rx_bytes": total_rx,
             "total_tx_bytes": total_tx,
-            "total_rx_gb": round(total_rx / (1024**3), 2),
-            "total_tx_gb": round(total_tx / (1024**3), 2),
-            "total_gb": round((total_rx + total_tx) / (1024**3), 2),
+            "total_rx_gb": round(total_rx / (1000**3), 2),
+            "total_tx_gb": round(total_tx / (1000**3), 2),
+            "total_gb": round((total_rx + total_tx) / (1000**3), 2),
             "log_entries": log_entries[-50:],  # Последние 50 записей
             "state": state,
             "error": None,

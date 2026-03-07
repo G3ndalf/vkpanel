@@ -97,7 +97,7 @@
                     </td>
                     <td id="traffic-{{ ip.ip.replace('.', '-') }}">
                         {% if ip.last_traffic %}
-                        <span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">{{ "%.3f"|format(ip.last_traffic.total_tx_gb / 1024) }} ТБ</span>
+                        <span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">{{ "%.3f"|format(ip.last_traffic.total_tx_gb / 1000) }} ТБ</span>
                         {% else %}
                         <span style="color: #64748b; font-size: 0.85rem;">—</span>
                         {% endif %}
@@ -439,7 +439,7 @@ async function submitTraffic(e) {
         if (trafficIp && data.ok) {
             const el = document.getElementById('traffic-' + trafficIp.replace(/\./g, '-'));
             if (el) {
-                const txTb = (data.total_tx_gb / 1024).toFixed(3);
+                const txTb = (data.total_tx_gb / 1000).toFixed(3);
                 el.innerHTML = `<span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">${txTb} ТБ</span>`;
             }
         }
