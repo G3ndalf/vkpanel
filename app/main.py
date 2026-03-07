@@ -1588,10 +1588,28 @@ async def monitoring_page(request: Request):
                 "last_check": status.get("last_check"),
                 "last_traffic": last_traffic,
             })
+
+        # Суммарный трафик арендатора (исходящий для расчёта оплаты)
+        tenant_tx_gb = sum(
+            (traffic_data.get(ip_addr, {}) or {}).get("total_tx_gb", 0)
+            for ip_addr in t.get("ips", [])
+        )
+        tenant_rx_gb = sum(
+            (traffic_data.get(ip_addr, {}) or {}).get("total_rx_gb", 0)
+            for ip_addr in t.get("ips", [])
+        )
+        tenant_total_gb = tenant_tx_gb + tenant_rx_gb
+        # Оплата: 0.5 руб за 1 ГБ исходящего трафика
+        tenant_cost = round(tenant_tx_gb * 0.5, 2)
+
         tenants_enriched.append({
             "name": t["name"],
             "ips": ips_info,
             "has_key": has_tenant_key,
+            "total_tx_tb": round(tenant_tx_gb / 1024, 3),
+            "total_rx_tb": round(tenant_rx_gb / 1024, 3),
+            "total_tb": round(tenant_total_gb / 1024, 3),
+            "cost": tenant_cost,
         })
 
     return templates.TemplateResponse("monitoring.html", {

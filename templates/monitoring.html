@@ -101,10 +101,10 @@
                     <td id="traffic-{{ ip.ip.replace('.', '-') }}">
                         {% if ip.last_traffic %}
                         <div style="font-size: 0.85rem;">
-                            <span style="color: #10b981;">↓ {{ ip.last_traffic.total_rx_gb }} ГБ</span>
-                            <span style="color: #3b82f6;">↑ {{ ip.last_traffic.total_tx_gb }} ГБ</span>
+                            <span style="color: #10b981;">↓ {{ "%.3f"|format(ip.last_traffic.total_rx_gb / 1024) }} ТБ</span>
+                            <span style="color: #3b82f6;">↑ {{ "%.3f"|format(ip.last_traffic.total_tx_gb / 1024) }} ТБ</span>
                         </div>
-                        <div style="font-size: 0.7rem; color: #64748b;">Всего: {{ ip.last_traffic.total_gb }} ГБ</div>
+                        <div style="font-size: 0.7rem; color: #64748b;">Всего: {{ "%.3f"|format(ip.last_traffic.total_gb / 1024) }} ТБ</div>
                         {% else %}
                         <span style="color: #64748b; font-size: 0.85rem;">—</span>
                         {% endif %}
@@ -121,6 +121,28 @@
             </tbody>
         </table>
     </div>
+    <!-- Итоги арендатора -->
+    <div class="tenant-body" id="summary-{{ tenant.name }}" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #334155; flex-wrap: wrap; gap: 0.75rem;">
+        <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+            <div>
+                <span style="color: #64748b; font-size: 0.8rem;">Исходящий:</span>
+                <span style="color: #3b82f6; font-weight: 600;">{{ tenant.total_tx_tb }} ТБ</span>
+            </div>
+            <div>
+                <span style="color: #64748b; font-size: 0.8rem;">Входящий:</span>
+                <span style="color: #10b981; font-weight: 600;">{{ tenant.total_rx_tb }} ТБ</span>
+            </div>
+            <div>
+                <span style="color: #64748b; font-size: 0.8rem;">Общий:</span>
+                <span style="color: #e2e8f0; font-weight: 600;">{{ tenant.total_tb }} ТБ</span>
+            </div>
+        </div>
+        <div style="background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.3); border-radius: 8px; padding: 0.5rem 1rem;">
+            <span style="color: #64748b; font-size: 0.8rem;">К оплате (исх. × 0.5₽/ГБ):</span>
+            <span style="color: #f59e0b; font-weight: 700; font-size: 1.1rem; margin-left: 0.5rem;">{{ tenant.cost }} ₽</span>
+        </div>
+    </div>
+
     {% else %}
     <div class="tenant-body" id="body-{{ tenant.name }}" style="color: #64748b; font-size: 0.9rem;">Нет IP у арендатора. Привяжите IP на вкладке "Арендаторы".</div>
     {% endif %}
@@ -132,6 +154,39 @@
     <div class="empty">
         <p>Арендаторов пока нет</p>
         <p style="margin-top: 0.5rem; font-size: 0.9rem; color: #64748b;">Создайте арендаторов и привяжите IP на вкладке <a href="/tenants" style="color: #f59e0b;">Арендаторы</a></p>
+    </div>
+</div>
+{% endif %}
+
+{% if tenants %}
+<!-- Общий итог -->
+{% set ns = namespace(tx=0, rx=0, cost=0) %}
+{% for t in tenants %}
+    {% set ns.tx = ns.tx + t.total_tx_tb %}
+    {% set ns.rx = ns.rx + t.total_rx_tb %}
+    {% set ns.cost = ns.cost + t.cost %}
+{% endfor %}
+<div class="card" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-color: #f59e0b33;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <h2 style="margin: 0;">📊 Общий итог</h2>
+        <div style="display: flex; gap: 2rem; flex-wrap: wrap; align-items: center;">
+            <div>
+                <span style="color: #64748b;">Исходящий:</span>
+                <span style="color: #3b82f6; font-weight: 600; font-size: 1.1rem;">{{ "%.3f"|format(ns.tx) }} ТБ</span>
+            </div>
+            <div>
+                <span style="color: #64748b;">Входящий:</span>
+                <span style="color: #10b981; font-weight: 600; font-size: 1.1rem;">{{ "%.3f"|format(ns.rx) }} ТБ</span>
+            </div>
+            <div>
+                <span style="color: #64748b;">Общий:</span>
+                <span style="color: #e2e8f0; font-weight: 700; font-size: 1.1rem;">{{ "%.3f"|format(ns.tx + ns.rx) }} ТБ</span>
+            </div>
+            <div style="background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); border-radius: 8px; padding: 0.5rem 1.25rem;">
+                <span style="color: #64748b;">Итого к оплате:</span>
+                <span style="color: #f59e0b; font-weight: 700; font-size: 1.25rem; margin-left: 0.5rem;">{{ "%.2f"|format(ns.cost) }} ₽</span>
+            </div>
+        </div>
     </div>
 </div>
 {% endif %}
@@ -393,15 +448,17 @@ async function submitTraffic(e) {
         closeTrafficModal();
 
         if (trafficIp && data.ok) {
-            // Обновляем ячейку трафика для одного IP
             const el = document.getElementById('traffic-' + trafficIp.replace(/\./g, '-'));
             if (el) {
+                const rxTb = (data.total_rx_gb / 1024).toFixed(3);
+                const txTb = (data.total_tx_gb / 1024).toFixed(3);
+                const totalTb = (data.total_gb / 1024).toFixed(3);
                 el.innerHTML = `
                     <div style="font-size: 0.85rem;">
-                        <span style="color: #10b981;">↓ ${data.total_rx_gb} ГБ</span>
-                        <span style="color: #3b82f6;">↑ ${data.total_tx_gb} ГБ</span>
+                        <span style="color: #10b981;">↓ ${rxTb} ТБ</span>
+                        <span style="color: #3b82f6;">↑ ${txTb} ТБ</span>
                     </div>
-                    <div style="font-size: 0.7rem; color: #64748b;">Всего: ${data.total_gb} ГБ</div>`;
+                    <div style="font-size: 0.7rem; color: #64748b;">Всего: ${totalTb} ТБ</div>`;
             }
         }
 
