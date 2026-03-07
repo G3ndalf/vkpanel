@@ -1636,7 +1636,11 @@ async def monitoring_page(request: Request):
             "cost": tenant_cost,
             "last_check": max(check_times) if check_times else None,
             "last_traffic_at": max(traffic_times) if traffic_times else None,
-            "last_traffic_days": traffic_days_list[0] if traffic_days_list else None,
+            "last_traffic_period": next(
+                (traffic_data.get(ip_addr, {}).get("period") for ip_addr in t.get("ips", [])
+                 if traffic_data.get(ip_addr, {}).get("period")),
+                None
+            ),
         })
 
     return templates.TemplateResponse("monitoring.html", {
@@ -1891,10 +1895,25 @@ async def api_monitoring_check_tenant(request: Request, tenant_name: str):
 
 
 @app.post("/api/monitoring/traffic/ip/{ip:path}")
-async def api_monitoring_traffic_ip(request: Request, ip: str, days: int = Form(1)):
+async def api_monitoring_traffic_ip(
+    request: Request, ip: str,
+    days: Optional[int] = Form(None),
+    date_from: Optional[str] = Form(None),
+    date_to: Optional[str] = Form(None),
+):
     """Собрать трафик с одного сервера."""
     if not get_current_user(request):
         raise HTTPException(status_code=401)
+
+    # Определяем период
+    if date_from and date_to:
+        period_label = f"{date_from} — {date_to}"
+        effective_days = 0  # collect_traffic получит даты напрямую
+    else:
+        days = days or 1
+        period_label = f"за {days} дн."
+        date_from = None
+        date_to = None
 
     data = load_data()
     tenant_name = None
@@ -1908,7 +1927,7 @@ async def api_monitoring_traffic_ip(request: Request, ip: str, days: int = Form(
         return JSONResponse({"ok": False, "error": "SSH ключ не найден"}, status_code=400)
 
     ssh_user = get_ssh_user(data, ip)
-    result = collect_traffic(ip, key_path, ssh_user, days)
+    result = collect_traffic(ip, key_path, ssh_user, days or 0, date_from, date_to)
 
     if result["ok"]:
         # Сохраняем данные трафика
@@ -1917,6 +1936,9 @@ async def api_monitoring_traffic_ip(request: Request, ip: str, days: int = Form(
         traffic_data[ip] = {
             "collected_at": now_msk().isoformat(),
             "days": days,
+            "date_from": date_from,
+            "date_to": date_to,
+            "period": period_label,
             "total_rx_gb": result["total_rx_gb"],
             "total_tx_gb": result["total_tx_gb"],
             "total_gb": result["total_gb"],
@@ -1928,22 +1950,39 @@ async def api_monitoring_traffic_ip(request: Request, ip: str, days: int = Form(
 
 
 @app.post("/api/monitoring/traffic/tenant/{tenant_name}")
-async def api_monitoring_traffic_tenant(request: Request, tenant_name: str, days: int = Form(1)):
+async def api_monitoring_traffic_tenant(
+    request: Request, tenant_name: str,
+    days: Optional[int] = Form(None),
+    date_from: Optional[str] = Form(None),
+    date_to: Optional[str] = Form(None),
+):
     """Собрать трафик со всех серверов арендатора."""
     if not get_current_user(request):
         raise HTTPException(status_code=401)
+
+    # Определяем период
+    if date_from and date_to:
+        period_label = f"{date_from} — {date_to}"
+    else:
+        days = days or 1
+        period_label = f"за {days} дн."
+        date_from = None
+        date_to = None
 
     data = load_data()
     ips = get_tenant_ips(data, tenant_name)
     if not ips:
         return JSONResponse({"ok": False, "error": "У арендатора нет IP"}, status_code=400)
 
+    _days = days or 0
+    _df, _dt = date_from, date_to
+
     def collect_one(ip: str) -> dict:
         key_path = get_ssh_key_path(data, ip, tenant_name)
         if not key_path:
             return {"ip": ip, "ok": False, "error": "SSH ключ не найден", "total_gb": 0}
         ssh_user = get_ssh_user(data, ip)
-        result = collect_traffic(ip, key_path, ssh_user, days)
+        result = collect_traffic(ip, key_path, ssh_user, _days, _df, _dt)
         return {"ip": ip, **result}
 
     with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
@@ -1959,6 +1998,9 @@ async def api_monitoring_traffic_tenant(request: Request, tenant_name: str, days
             traffic_data[r["ip"]] = {
                 "collected_at": now_msk().isoformat(),
                 "days": days,
+                "date_from": date_from,
+                "date_to": date_to,
+                "period": period_label,
                 "total_rx_gb": r.get("total_rx_gb", 0),
                 "total_tx_gb": r.get("total_tx_gb", 0),
                 "total_gb": r.get("total_gb", 0),

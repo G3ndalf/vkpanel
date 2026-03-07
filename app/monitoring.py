@@ -244,10 +244,12 @@ def deploy_agent(ip: str, key_path: str, ssh_user: str, panel_url: str) -> dict:
         return {"ok": False, "message": str(e)[:300], "api_key": ""}
 
 
-def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1) -> dict:
+def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1,
+                    date_from: Optional[str] = None, date_to: Optional[str] = None) -> dict:
     """
     Собирает данные о трафике с сервера.
     Возвращает {"ok": bool, "traffic": dict, "error": str|None}.
+    date_from/date_to — строки YYYY-MM-DD для фильтрации логов по периоду.
     """
     try:
         client = _ssh_connect_by_key(ip, key_path, ssh_user)
@@ -290,15 +292,23 @@ def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1) -> dic
                 "tx_bytes": base_tx + raw["tx_bytes"],
             }
 
-        # Если нужны данные за N дней — парсим лог
+        # Парсим лог за период
         log_entries = []
-        if days > 0:
-            cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-            code, out, _ = _ssh_exec(client, f"cat /var/log/traffic_agent.log 2>/dev/null | grep '^{cutoff[:4]}' || true", timeout=30)
+        if date_from and date_to:
+            cutoff_start = date_from
+            cutoff_end = date_to
+        elif days > 0:
+            cutoff_start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+            cutoff_end = datetime.utcnow().strftime("%Y-%m-%d")
+        else:
+            cutoff_start = cutoff_end = None
+
+        if cutoff_start and cutoff_end:
+            code, out, _ = _ssh_exec(client, f"cat /var/log/traffic_agent.log 2>/dev/null | grep '^{cutoff_start[:4]}' || true", timeout=30)
             if code == 0 and out.strip():
                 for line in out.strip().split("\n"):
                     # Формат: "2026-03-07 03:00:00 | OK: 2 interfaces sent"
-                    if line[:10] >= cutoff:
+                    if cutoff_start <= line[:10] <= cutoff_end:
                         log_entries.append(line.strip())
 
         # Считаем суммарный трафик
