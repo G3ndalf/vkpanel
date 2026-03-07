@@ -101,6 +101,9 @@
                     <td id="traffic-{{ ip.ip.replace('.', '-') }}">
                         {% if ip.last_traffic %}
                         <span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">{{ "%.3f"|format(ip.last_traffic.total_tx_gb / 1024) }} ТБ</span>
+                        {% if ip.last_traffic.collected_at %}
+                        <div style="font-size: 0.65rem; color: #64748b; margin-top: 0.15rem;">{{ ip.last_traffic.collected_at[:16].replace('T', ' ') }}{% if ip.last_traffic.days %} · за {{ ip.last_traffic.days }} дн.{% endif %}</div>
+                        {% endif %}
                         {% else %}
                         <span style="color: #64748b; font-size: 0.85rem;">—</span>
                         {% endif %}

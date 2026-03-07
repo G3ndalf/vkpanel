@@ -5,7 +5,14 @@ FastAPI + Jinja2 + Paramiko для SSH.
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# Московское время (UTC+3)
+MSK = timezone(timedelta(hours=3))
+
+def now_msk() -> datetime:
+    """Текущее время по Москве."""
+    return datetime.now(MSK)
 from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException, Form, UploadFile, File
@@ -1813,7 +1820,7 @@ async def api_monitoring_check_ip(request: Request, ip: str):
     monitoring = data.setdefault("monitoring", {})
     ip_status = monitoring.setdefault("ip_status", {})
     ip_status.setdefault(ip, {})["is_reachable"] = result["reachable"]
-    ip_status[ip]["last_check"] = datetime.utcnow().isoformat()
+    ip_status[ip]["last_check"] = now_msk().isoformat()
     save_data(data)
 
     return JSONResponse({
@@ -1849,7 +1856,7 @@ async def api_monitoring_check_tenant(request: Request, tenant_name: str):
     # Сохраняем результаты
     monitoring = data.setdefault("monitoring", {})
     ip_status = monitoring.setdefault("ip_status", {})
-    now = datetime.utcnow().isoformat()
+    now = now_msk().isoformat()
     for r in results:
         ip_status.setdefault(r["ip"], {})["is_reachable"] = r["reachable"]
         ip_status[r["ip"]]["last_check"] = now
@@ -1888,7 +1895,8 @@ async def api_monitoring_traffic_ip(request: Request, ip: str, days: int = Form(
         monitoring = data.setdefault("monitoring", {})
         traffic_data = monitoring.setdefault("traffic_data", {})
         traffic_data[ip] = {
-            "collected_at": datetime.utcnow().isoformat(),
+            "collected_at": now_msk().isoformat(),
+            "days": days,
             "total_rx_gb": result["total_rx_gb"],
             "total_tx_gb": result["total_tx_gb"],
             "total_gb": result["total_gb"],
@@ -1929,7 +1937,8 @@ async def api_monitoring_traffic_tenant(request: Request, tenant_name: str, days
     for r in results:
         if r.get("ok"):
             traffic_data[r["ip"]] = {
-                "collected_at": datetime.utcnow().isoformat(),
+                "collected_at": now_msk().isoformat(),
+                "days": days,
                 "total_rx_gb": r.get("total_rx_gb", 0),
                 "total_tx_gb": r.get("total_tx_gb", 0),
                 "total_gb": r.get("total_gb", 0),
@@ -1977,7 +1986,7 @@ async def api_v1_report(request: Request):
     total_tx = sum(v.get("tx_bytes", 0) for v in interfaces.values())
 
     traffic_data[ip] = {
-        "collected_at": datetime.utcnow().isoformat(),
+        "collected_at": now_msk().isoformat(),
         "total_rx_gb": round(total_rx / (1024**3), 2),
         "total_tx_gb": round(total_tx / (1024**3), 2),
         "total_gb": round((total_rx + total_tx) / (1024**3), 2),
@@ -1987,7 +1996,7 @@ async def api_v1_report(request: Request):
 
     # Обновляем статус
     ip_status = monitoring.setdefault("ip_status", {})
-    ip_status.setdefault(ip, {})["last_report"] = datetime.utcnow().isoformat()
+    ip_status.setdefault(ip, {})["last_report"] = now_msk().isoformat()
     ip_status[ip]["is_reachable"] = True
 
     save_data(data)
