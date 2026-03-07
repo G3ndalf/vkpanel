@@ -2049,9 +2049,9 @@ async def api_v1_report(request: Request):
 
     traffic_data[ip] = {
         "collected_at": now_msk().isoformat(),
-        "total_rx_gb": round(total_rx / (1024**3), 2),
-        "total_tx_gb": round(total_tx / (1024**3), 2),
-        "total_gb": round((total_rx + total_tx) / (1024**3), 2),
+        "total_rx_gb": round(total_rx / (1000**3), 2),
+        "total_tx_gb": round(total_tx / (1000**3), 2),
+        "total_gb": round((total_rx + total_tx) / (1000**3), 2),
         "interfaces": interfaces,
         "source": "agent",
     }
