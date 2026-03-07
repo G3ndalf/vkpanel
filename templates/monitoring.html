@@ -58,7 +58,7 @@
                     <th>SSH ключ</th>
                     <th>Агент</th>
                     <th>Статус</th>
-                    <th>Трафик</th>
+                    <th>Исх. трафик</th>
                     <th>Действия</th>
                 </tr>
             </thead>
@@ -100,11 +100,7 @@
                     </td>
                     <td id="traffic-{{ ip.ip.replace('.', '-') }}">
                         {% if ip.last_traffic %}
-                        <div style="font-size: 0.85rem;">
-                            <span style="color: #10b981;">↓ {{ "%.3f"|format(ip.last_traffic.total_rx_gb / 1024) }} ТБ</span>
-                            <span style="color: #3b82f6;">↑ {{ "%.3f"|format(ip.last_traffic.total_tx_gb / 1024) }} ТБ</span>
-                        </div>
-                        <div style="font-size: 0.7rem; color: #64748b;">Всего: {{ "%.3f"|format(ip.last_traffic.total_gb / 1024) }} ТБ</div>
+                        <span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">{{ "%.3f"|format(ip.last_traffic.total_tx_gb / 1024) }} ТБ</span>
                         {% else %}
                         <span style="color: #64748b; font-size: 0.85rem;">—</span>
                         {% endif %}
@@ -123,19 +119,9 @@
     </div>
     <!-- Итоги арендатора -->
     <div class="tenant-body" id="summary-{{ tenant.name }}" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #334155; flex-wrap: wrap; gap: 0.75rem;">
-        <div style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
-            <div>
-                <span style="color: #64748b; font-size: 0.8rem;">Исходящий:</span>
-                <span style="color: #3b82f6; font-weight: 600;">{{ tenant.total_tx_tb }} ТБ</span>
-            </div>
-            <div>
-                <span style="color: #64748b; font-size: 0.8rem;">Входящий:</span>
-                <span style="color: #10b981; font-weight: 600;">{{ tenant.total_rx_tb }} ТБ</span>
-            </div>
-            <div>
-                <span style="color: #64748b; font-size: 0.8rem;">Общий:</span>
-                <span style="color: #e2e8f0; font-weight: 600;">{{ tenant.total_tb }} ТБ</span>
-            </div>
+        <div>
+            <span style="color: #64748b; font-size: 0.8rem;">Исходящий трафик:</span>
+            <span style="color: #3b82f6; font-weight: 600;">{{ tenant.total_tx_tb }} ТБ</span>
         </div>
         <div style="background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.3); border-radius: 8px; padding: 0.5rem 1rem;">
             <span style="color: #64748b; font-size: 0.8rem;">К оплате (исх. × 0.5₽/ГБ):</span>
@@ -160,10 +146,9 @@
 
 {% if tenants %}
 <!-- Общий итог -->
-{% set ns = namespace(tx=0, rx=0, cost=0) %}
+{% set ns = namespace(tx=0, cost=0) %}
 {% for t in tenants %}
     {% set ns.tx = ns.tx + t.total_tx_tb %}
-    {% set ns.rx = ns.rx + t.total_rx_tb %}
     {% set ns.cost = ns.cost + t.cost %}
 {% endfor %}
 <div class="card" style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-color: #f59e0b33;">
@@ -171,16 +156,8 @@
         <h2 style="margin: 0;">📊 Общий итог</h2>
         <div style="display: flex; gap: 2rem; flex-wrap: wrap; align-items: center;">
             <div>
-                <span style="color: #64748b;">Исходящий:</span>
-                <span style="color: #3b82f6; font-weight: 600; font-size: 1.1rem;">{{ "%.3f"|format(ns.tx) }} ТБ</span>
-            </div>
-            <div>
-                <span style="color: #64748b;">Входящий:</span>
-                <span style="color: #10b981; font-weight: 600; font-size: 1.1rem;">{{ "%.3f"|format(ns.rx) }} ТБ</span>
-            </div>
-            <div>
-                <span style="color: #64748b;">Общий:</span>
-                <span style="color: #e2e8f0; font-weight: 700; font-size: 1.1rem;">{{ "%.3f"|format(ns.tx + ns.rx) }} ТБ</span>
+                <span style="color: #64748b;">Исходящий трафик:</span>
+                <span style="color: #3b82f6; font-weight: 700; font-size: 1.1rem;">{{ "%.3f"|format(ns.tx) }} ТБ</span>
             </div>
             <div style="background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); border-radius: 8px; padding: 0.5rem 1.25rem;">
                 <span style="color: #64748b;">Итого к оплате:</span>
@@ -270,6 +247,10 @@
     cursor: pointer; padding: 0; line-height: 1;
 }
 .modal-close:hover { color: #ef4444; }
+/* Компактная таблица мониторинга */
+.card table th, .card table td {
+    padding: 0.35rem 0.75rem;
+}
 .tenant-arrow {
     display: inline-block;
     font-size: 0.75rem;
@@ -450,15 +431,8 @@ async function submitTraffic(e) {
         if (trafficIp && data.ok) {
             const el = document.getElementById('traffic-' + trafficIp.replace(/\./g, '-'));
             if (el) {
-                const rxTb = (data.total_rx_gb / 1024).toFixed(3);
                 const txTb = (data.total_tx_gb / 1024).toFixed(3);
-                const totalTb = (data.total_gb / 1024).toFixed(3);
-                el.innerHTML = `
-                    <div style="font-size: 0.85rem;">
-                        <span style="color: #10b981;">↓ ${rxTb} ТБ</span>
-                        <span style="color: #3b82f6;">↑ ${txTb} ТБ</span>
-                    </div>
-                    <div style="font-size: 0.7rem; color: #64748b;">Всего: ${totalTb} ТБ</div>`;
+                el.innerHTML = `<span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">${txTb} ТБ</span>`;
             }
         }
 
