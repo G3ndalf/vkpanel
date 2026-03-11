@@ -112,6 +112,18 @@ def compute_traffic(raw_stats):
     save_state(state)
     return result
 
+def save_daily_snapshot(stats):
+    from datetime import datetime
+    history_dir = os.path.join(STATE_DIR, "history")
+    os.makedirs(history_dir, exist_ok=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    path = os.path.join(history_dir, f"{today}.json")
+    try:
+        with open(path, "w") as f:
+            json.dump({"date": today, "interfaces": stats}, f, indent=2)
+        logger.info(f"Snapshot saved: {path}")
+    except Exception as e: logger.error(f"Snapshot error: {e}")
+
 def send_report(stats):
     url = CONFIG["SERVER_URL"].rstrip("/") + "/api/v1/report"
     data = json.dumps({"interfaces": stats}).encode("utf-8")
@@ -129,6 +141,7 @@ if __name__ == "__main__":
     raw = read_raw_traffic()
     if not raw: logger.error("No interfaces"); sys.exit(1)
     stats = compute_traffic(raw)
+    save_daily_snapshot(stats)
     if send_report(stats): logger.info(f"OK: {len(stats)} ifaces"); sys.exit(0)
     else: logger.error("Failed"); sys.exit(1)
 '''
@@ -244,72 +257,127 @@ def deploy_agent(ip: str, key_path: str, ssh_user: str, panel_url: str) -> dict:
         return {"ok": False, "message": str(e)[:300], "api_key": ""}
 
 
+def _read_current_cumulative(client) -> dict:
+    """Читает текущий кумулятивный трафик (base + /proc/net/dev) с сервера."""
+    # Читаем текущий трафик из /proc/net/dev
+    code, out, _ = _ssh_exec(client, "cat /proc/net/dev")
+    raw_traffic = {}
+    if code == 0:
+        for line in out.strip().split("\n")[2:]:
+            parts = line.split(":")
+            if len(parts) != 2:
+                continue
+            iface = parts[0].strip()
+            if iface in ("lo",) or iface.startswith(("veth", "br-", "docker")):
+                continue
+            vals = parts[1].split()
+            if len(vals) >= 10:
+                raw_traffic[iface] = {
+                    "rx_bytes": int(vals[0]),
+                    "tx_bytes": int(vals[8]),
+                }
+
+    # Читаем state файл (персистентные данные с базой ребутов)
+    code, out, _ = _ssh_exec(client, "cat /var/lib/traffic_agent/state.json 2>/dev/null")
+    state = {}
+    if code == 0 and out.strip():
+        try:
+            state = json.loads(out)
+        except json.JSONDecodeError:
+            pass
+
+    # Вычисляем полный кумулятивный трафик (base + raw)
+    traffic = {}
+    for iface, raw in raw_traffic.items():
+        st = state.get(iface, {})
+        base_rx = st.get("base_rx", 0)
+        base_tx = st.get("base_tx", 0)
+        traffic[iface] = {
+            "rx_bytes": base_rx + raw["rx_bytes"],
+            "tx_bytes": base_tx + raw["tx_bytes"],
+        }
+
+    return traffic
+
+
+def _read_snapshot(client, date_str: str) -> Optional[dict]:
+    """Читает снапшот за указанную дату. Возвращает dict интерфейсов или None."""
+    code, out, _ = _ssh_exec(client, f"cat /var/lib/traffic_agent/history/{date_str}.json 2>/dev/null")
+    if code != 0 or not out.strip():
+        return None
+    try:
+        data = json.loads(out)
+        return data.get("interfaces", {})
+    except json.JSONDecodeError:
+        return None
+
+
+def _find_nearest_snapshot(client, target_date: str, direction: str = "before", max_days: int = 3) -> Optional[dict]:
+    """
+    Ищет ближайший снапшот к target_date.
+    direction: "before" — ищем раньше, "after" — позже.
+    Возвращает (date_str, interfaces) или None.
+    """
+    from datetime import datetime, timedelta
+    dt = datetime.strptime(target_date, "%Y-%m-%d")
+    step = -1 if direction == "before" else 1
+    for i in range(max_days + 1):
+        check = dt + timedelta(days=i * step)
+        check_str = check.strftime("%Y-%m-%d")
+        snap = _read_snapshot(client, check_str)
+        if snap is not None:
+            return {"date": check_str, "interfaces": snap}
+    return None
+
+
 def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1,
                     date_from: Optional[str] = None, date_to: Optional[str] = None) -> dict:
     """
-    Собирает данные о трафике с сервера.
-    Возвращает {"ok": bool, "traffic": dict, "error": str|None}.
-    date_from/date_to — строки YYYY-MM-DD для фильтрации логов по периоду.
+    Собирает трафик за период.
+
+    Логика:
+    - Читает текущий кумулятивный трафик (= "сейчас")
+    - Читает снапшот за начало периода из /var/lib/traffic_agent/history/
+    - Трафик за период = текущий - снапшот начала периода
+    - Если снапшотов нет — фоллбэк на полный кумулятивный (с предупреждением)
     """
     try:
         client = _ssh_connect_by_key(ip, key_path, ssh_user)
 
-        # Читаем текущий трафик из /proc/net/dev
-        code, out, _ = _ssh_exec(client, "cat /proc/net/dev")
-        raw_traffic = {}
-        if code == 0:
-            for line in out.strip().split("\n")[2:]:
-                parts = line.split(":")
-                if len(parts) != 2:
-                    continue
-                iface = parts[0].strip()
-                if iface in ("lo",) or iface.startswith(("veth", "br-", "docker")):
-                    continue
-                vals = parts[1].split()
-                if len(vals) >= 10:
-                    raw_traffic[iface] = {
-                        "rx_bytes": int(vals[0]),
-                        "tx_bytes": int(vals[8]),
-                    }
+        # Текущий кумулятивный трафик
+        current = _read_current_cumulative(client)
 
-        # Читаем state файл (персистентные данные)
-        code, out, _ = _ssh_exec(client, "cat /var/lib/traffic_agent/state.json 2>/dev/null")
-        state = {}
-        if code == 0 and out.strip():
-            try:
-                state = json.loads(out)
-            except json.JSONDecodeError:
-                pass
-
-        # Вычисляем полный трафик с учётом базы (ребутов)
-        traffic = {}
-        for iface, raw in raw_traffic.items():
-            st = state.get(iface, {})
-            base_rx = st.get("base_rx", 0)
-            base_tx = st.get("base_tx", 0)
-            traffic[iface] = {
-                "rx_bytes": base_rx + raw["rx_bytes"],
-                "tx_bytes": base_tx + raw["tx_bytes"],
-            }
-
-        # Парсим лог за период
-        log_entries = []
-        if date_from and date_to:
-            cutoff_start = date_from
-            cutoff_end = date_to
+        # Определяем начальную дату периода
+        if date_from:
+            period_start = date_from
         elif days > 0:
-            cutoff_start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-            cutoff_end = datetime.utcnow().strftime("%Y-%m-%d")
+            period_start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
         else:
-            cutoff_start = cutoff_end = None
+            period_start = None
 
-        if cutoff_start and cutoff_end:
-            code, out, _ = _ssh_exec(client, f"cat /var/log/traffic_agent.log 2>/dev/null | grep '^{cutoff_start[:4]}' || true", timeout=30)
-            if code == 0 and out.strip():
-                for line in out.strip().split("\n"):
-                    # Формат: "2026-03-07 03:00:00 | OK: 2 interfaces sent"
-                    if cutoff_start <= line[:10] <= cutoff_end:
-                        log_entries.append(line.strip())
+        # Ищем снапшот за начало периода
+        start_snapshot = None
+        snapshot_warning = None
+        if period_start:
+            found = _find_nearest_snapshot(client, period_start, direction="before", max_days=3)
+            if found:
+                start_snapshot = found["interfaces"]
+                if found["date"] != period_start:
+                    snapshot_warning = f"Точный снапшот за {period_start} не найден, использован {found['date']}"
+            else:
+                snapshot_warning = f"Снапшоты за период от {period_start} отсутствуют — показан полный трафик. Обновите агент на сервере."
+
+        # Вычисляем трафик за период (разница)
+        traffic = {}
+        if start_snapshot and period_start:
+            for iface, cur in current.items():
+                snap = start_snapshot.get(iface, {"rx_bytes": 0, "tx_bytes": 0})
+                rx = max(0, cur["rx_bytes"] - snap["rx_bytes"])
+                tx = max(0, cur["tx_bytes"] - snap["tx_bytes"])
+                traffic[iface] = {"rx_bytes": rx, "tx_bytes": tx}
+        else:
+            # Фоллбэк — полный кумулятивный трафик
+            traffic = current
 
         # Считаем суммарный трафик
         total_rx = sum(v["rx_bytes"] for v in traffic.values())
@@ -317,7 +385,7 @@ def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1,
 
         client.close()
 
-        return {
+        result = {
             "ok": True,
             "traffic": traffic,
             "total_rx_bytes": total_rx,
@@ -325,10 +393,12 @@ def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1,
             "total_rx_gb": round(total_rx / (1000**3), 2),
             "total_tx_gb": round(total_tx / (1000**3), 2),
             "total_gb": round((total_rx + total_tx) / (1000**3), 2),
-            "log_entries": log_entries[-50:],  # Последние 50 записей
-            "state": state,
             "error": None,
         }
+        if snapshot_warning:
+            result["warning"] = snapshot_warning
+
+        return result
 
     except Exception as e:
         logger.error(f"Collect traffic from {ip} failed: {e}")

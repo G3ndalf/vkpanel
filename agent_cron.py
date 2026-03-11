@@ -143,6 +143,29 @@ def compute_traffic(raw_stats):
     return result
 
 
+def save_daily_snapshot(stats):
+    """
+    Сохраняет ежедневный снапшот кумулятивного трафика.
+    Файл: /var/lib/traffic_agent/history/YYYY-MM-DD.json
+    Перезаписывается при повторном запуске в тот же день.
+    """
+    from datetime import datetime
+    history_dir = os.path.join(STATE_DIR, "history")
+    os.makedirs(history_dir, exist_ok=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    snapshot_path = os.path.join(history_dir, f"{today}.json")
+    snapshot = {
+        "date": today,
+        "interfaces": stats,
+    }
+    try:
+        with open(snapshot_path, "w") as f:
+            json.dump(snapshot, f, indent=2)
+        logger.info(f"Snapshot saved: {snapshot_path}")
+    except Exception as e:
+        logger.error(f"Failed to save snapshot: {e}")
+
+
 def send_report(stats):
     """Отправляет данные на сервер биллинга."""
     url = CONFIG["SERVER_URL"].rstrip("/") + "/api/v1/report"
@@ -182,6 +205,9 @@ if __name__ == "__main__":
 
     # Вычисляем трафик с учётом ребутов
     stats = compute_traffic(raw_stats)
+
+    # Сохраняем ежедневный снапшот для расчёта трафика за период
+    save_daily_snapshot(stats)
 
     if send_report(stats):
         logger.info(f"OK: {len(stats)} interfaces sent")
