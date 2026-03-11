@@ -35,7 +35,7 @@
             <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">— {{ tenant.ips|length }} IP</span>
         </h2>
         <div style="display: flex; gap: 0.5rem;">
-            <button class="btn btn-secondary btn-sm" onclick="openBulkIperfModal('{{ tenant.name }}', {{ tenant.ips|map(attribute='ip')|list|tojson }})">📶 Проверить все iperf</button>
+            <button class="btn btn-secondary btn-sm" onclick='openBulkIperfModal("{{ tenant.name }}", {{ tenant.ips|map(attribute="ip")|list|tojson }})'>📶 Проверить все iperf</button>
             <button class="btn btn-primary btn-sm" onclick="openAssignModal('{{ tenant.name }}')">➕ Добавить IP</button>
             <button class="btn btn-danger btn-sm" onclick="deleteTenant('{{ tenant.name }}')" style="opacity: 0.7;">🗑 Удалить</button>
         </div>
