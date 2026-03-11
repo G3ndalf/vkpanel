@@ -1067,7 +1067,7 @@ async def tenants_page(request: Request):
                     "server_name": ip.get("server_name"),
                 }
 
-    # Обогащаем данные арендаторов
+    # Обогащаем данные арендаторов — группировка по аккаунтам
     tenants_enriched = []
     for t in tenants:
         ips_enriched = []
@@ -1080,9 +1080,21 @@ async def tenants_page(request: Request):
                 "attached": info.get("attached", False),
                 "server_name": info.get("server_name"),
             })
+
+        # Группируем IP по аккаунтам, сортируем аккаунты по алфавиту
+        accounts = {}
+        for ip_data in ips_enriched:
+            acc = ip_data["account"]
+            accounts.setdefault(acc, []).append(ip_data)
+        accounts_sorted = [
+            {"account": acc, "ips": ips}
+            for acc, ips in sorted(accounts.items(), key=lambda x: x[0].lower())
+        ]
+
         tenants_enriched.append({
             "name": t["name"],
             "ips": ips_enriched,
+            "accounts": accounts_sorted,
         })
 
     # Собираем все IP для выбора (свободные от арендаторов)
