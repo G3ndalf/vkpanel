@@ -2010,12 +2010,17 @@ async def api_monitoring_traffic_tenant(
     save_data(data)
 
     ok_count = sum(1 for r in results if r.get("ok"))
-    return JSONResponse({
+    # Собираем предупреждения о снапшотах
+    warnings = [r["warning"] for r in results if r.get("warning")]
+    resp = {
         "ok": ok_count > 0,
         "message": f"Собрано с {ok_count}/{len(results)} серверов. Общий трафик: {round(total_gb, 2)} ГБ",
         "total_gb": round(total_gb, 2),
         "results": results,
-    })
+    }
+    if warnings:
+        resp["warning"] = f"Снапшоты отсутствуют на {len(warnings)} из {len(results)} серверов. Обновите агент."
+    return JSONResponse(resp)
 
 
 @app.post("/api/v1/report")

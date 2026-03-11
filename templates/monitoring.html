@@ -487,6 +487,10 @@ async function submitTraffic(e) {
         }
 
         if (data.ok || data.message) {
+            // Показываем предупреждение если снапшотов нет
+            if (data.warning) {
+                showToast('⚠️ ' + data.warning, 'error', 8000);
+            }
             showToast(data.message || `Трафик: ${data.total_gb} ГБ`, 'success');
             if (trafficTenant) setTimeout(() => location.reload(), 1500);
         } else {
