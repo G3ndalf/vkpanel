@@ -1218,6 +1218,78 @@ async def api_unassign_ip(request: Request, tenant_name: str, ip: str = Form(...
     return JSONResponse({"ok": True, "message": f"IP {ip} отвязан от '{tenant_name}'"})
 
 
+@app.post("/api/tenants/iperf/{ip:path}")
+async def api_tenant_iperf(
+    request: Request, ip: str,
+    target: str = Form(...),
+    port: int = Form(5201),
+    duration: int = Form(10),
+):
+    """Запустить iperf3 тест с сервера арендатора до указанного хоста."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+
+    # Ищем к какому арендатору принадлежит IP
+    tenant_name = None
+    for t in data.get("tenants", []):
+        if ip in t.get("ips", []):
+            tenant_name = t["name"]
+            break
+
+    key_path = get_ssh_key_path(data, ip, tenant_name)
+    if not key_path:
+        return JSONResponse({"ok": False, "error": "SSH ключ не найден"}, status_code=400)
+
+    ssh_user = get_ssh_user(data, ip)
+
+    # Валидация: duration 1-60, port 1-65535
+    duration = max(1, min(60, duration))
+    port = max(1, min(65535, port))
+
+    try:
+        from .monitoring import _ssh_connect_by_key, _ssh_exec
+        client = _ssh_connect_by_key(ip, key_path, ssh_user)
+        # Запускаем iperf3 клиент
+        cmd = f"iperf3 -c {target} -p {port} -t {duration} -J"
+        code, out, err = _ssh_exec(client, cmd, timeout=duration + 15)
+        client.close()
+
+        if code != 0:
+            error_msg = err.strip() or out.strip() or "iperf3 завершился с ошибкой"
+            return JSONResponse({"ok": False, "error": error_msg[:500]})
+
+        import json as _json
+        try:
+            result = _json.loads(out)
+        except Exception:
+            return JSONResponse({"ok": False, "error": "Не удалось распарсить вывод iperf3"})
+
+        # Извлекаем ключевые метрики
+        end = result.get("end", {})
+        sent = end.get("sum_sent", {})
+        received = end.get("sum_received", {})
+
+        return JSONResponse({
+            "ok": True,
+            "source": ip,
+            "target": target,
+            "port": port,
+            "duration": duration,
+            "sent_mbps": round(sent.get("bits_per_second", 0) / 1_000_000, 2),
+            "received_mbps": round(received.get("bits_per_second", 0) / 1_000_000, 2),
+            "sent_mb": round(sent.get("bytes", 0) / 1_000_000, 2),
+            "received_mb": round(received.get("bytes", 0) / 1_000_000, 2),
+            "retransmits": sent.get("retransmits", 0),
+            "raw": result,
+        })
+
+    except Exception as e:
+        logger.error(f"iperf test from {ip} to {target} failed: {e}")
+        return JSONResponse({"ok": False, "error": str(e)[:300]})
+
+
 # ─── Логи ─────────────────────────────────────────────────────
 
 @app.get("/logs", response_class=HTMLResponse)

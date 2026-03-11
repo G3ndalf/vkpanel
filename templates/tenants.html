@@ -62,7 +62,10 @@
                         <code style="font-family: monospace; font-size: 0.85rem; color: {% if ip.attached %}#10b981{% else %}#e2e8f0{% endif %};">{{ ip.ip }}</code>
                         {% if ip.server_name %}<span style="font-size: 0.65rem; color: #475569; margin-left: 0.3rem;">{{ ip.server_name }}</span>{% endif %}
                     </div>
-                    <button class="btn btn-danger btn-sm" onclick="unassignIp('{{ tenant.name }}', '{{ ip.ip }}')" title="Отвязать IP" style="opacity: 0.6; padding: 0.1rem 0.35rem; font-size: 0.7rem;">✕</button>
+                    <div style="display: flex; gap: 0.2rem;">
+                        <button class="btn btn-secondary btn-sm" onclick="openIperfModal('{{ ip.ip }}')" title="iperf тест" style="padding: 0.1rem 0.35rem; font-size: 0.7rem;">📶</button>
+                        <button class="btn btn-danger btn-sm" onclick="unassignIp('{{ tenant.name }}', '{{ ip.ip }}')" title="Отвязать IP" style="opacity: 0.6; padding: 0.1rem 0.35rem; font-size: 0.7rem;">✕</button>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
@@ -146,6 +149,39 @@
                 </div>
                 {% endfor %}
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка iperf теста -->
+<div id="iperf-modal" class="modal" onclick="if(event.target.id==='iperf-modal') closeIperfModal();">
+    <div class="modal-content" style="max-width: 450px;">
+        <div class="modal-header">
+            <h3>📶 iperf тест — <span id="iperf-source-ip" style="color: #f59e0b;"></span></h3>
+            <button class="modal-close" onclick="closeIperfModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <form id="iperf-form" onsubmit="submitIperf(event)">
+                <div class="form-group">
+                    <label>Целевой сервер (IP или домен)</label>
+                    <input type="text" id="iperf-target" placeholder="192.168.1.1" required>
+                </div>
+                <div style="display: flex; gap: 0.75rem;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Порт</label>
+                        <input type="number" id="iperf-port" value="5201" min="1" max="65535">
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>Длительность (сек)</label>
+                        <input type="number" id="iperf-duration" value="10" min="1" max="60">
+                    </div>
+                </div>
+                <div id="iperf-result" style="display: none; margin-bottom: 1rem; padding: 0.75rem; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid #334155;"></div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="closeIperfModal()">Закрыть</button>
+                    <button type="submit" class="btn btn-primary" id="iperf-submit-btn">▶ Запустить</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -313,8 +349,75 @@ async function unassignIp(tenantName, ip) {
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
+// ─── iperf тест ───────────────────────────────
+let iperfSourceIp = null;
+
+function openIperfModal(ip) {
+    iperfSourceIp = ip;
+    document.getElementById('iperf-source-ip').textContent = ip;
+    document.getElementById('iperf-result').style.display = 'none';
+    // Сохраняем последний введённый target
+    if (!document.getElementById('iperf-target').value) {
+        document.getElementById('iperf-target').value = '';
+    }
+    document.getElementById('iperf-modal').classList.add('active');
+    document.getElementById('iperf-target').focus();
+}
+
+function closeIperfModal() {
+    document.getElementById('iperf-modal').classList.remove('active');
+    iperfSourceIp = null;
+}
+
+async function submitIperf(e) {
+    e.preventDefault();
+    if (!iperfSourceIp) return;
+
+    const btn = document.getElementById('iperf-submit-btn');
+    const resultDiv = document.getElementById('iperf-result');
+    const target = document.getElementById('iperf-target').value.trim();
+    const port = document.getElementById('iperf-port').value;
+    const duration = document.getElementById('iperf-duration').value;
+
+    if (!target) { showToast('Введите целевой сервер', 'error'); return; }
+
+    btn.disabled = true; btn.classList.add('btn-loading'); btn.textContent = '⏳ Тестирую...';
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = `<span style="color: #94a3b8;">Запускаю iperf3 с ${iperfSourceIp} → ${target}:${port} (${duration}с)...</span>`;
+
+    const formData = new FormData();
+    formData.append('target', target);
+    formData.append('port', port);
+    formData.append('duration', duration);
+
+    try {
+        const res = await fetch(`/api/tenants/iperf/${iperfSourceIp}`, {method: 'POST', body: formData, credentials: 'same-origin'});
+        const data = await res.json();
+
+        if (data.ok) {
+            resultDiv.innerHTML = `
+                <div style="font-size: 0.85rem;">
+                    <div style="margin-bottom: 0.5rem; color: #10b981; font-weight: 600;">✅ Тест завершён</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;">
+                        <div>📤 Отправка: <strong style="color: #3b82f6;">${data.sent_mbps} Мбит/с</strong></div>
+                        <div>📥 Приём: <strong style="color: #10b981;">${data.received_mbps} Мбит/с</strong></div>
+                        <div>📦 Отправлено: ${data.sent_mb} МБ</div>
+                        <div>📦 Получено: ${data.received_mb} МБ</div>
+                        ${data.retransmits ? `<div style="grid-column: span 2;">🔄 Ретрансмиты: <span style="color: ${data.retransmits > 10 ? '#ef4444' : '#f59e0b'};">${data.retransmits}</span></div>` : ''}
+                    </div>
+                </div>`;
+        } else {
+            resultDiv.innerHTML = `<div style="color: #ef4444; font-size: 0.85rem;">❌ Ошибка: ${data.error}</div>`;
+        }
+    } catch (e) {
+        resultDiv.innerHTML = `<div style="color: #ef4444; font-size: 0.85rem;">❌ Ошибка: ${e.message}</div>`;
+    }
+
+    btn.disabled = false; btn.classList.remove('btn-loading'); btn.textContent = '▶ Запустить';
+}
+
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeAddTenantModal(); closeAssignModal(); }
+    if (e.key === 'Escape') { closeAddTenantModal(); closeAssignModal(); closeIperfModal(); }
 });
 </script>
 {% endblock %}
