@@ -35,6 +35,7 @@
             <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">— {{ tenant.ips|length }} IP</span>
         </h2>
         <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary btn-sm" onclick="openBulkIperfModal('{{ tenant.name }}', {{ tenant.ips|map(attribute='ip')|list|tojson }})">📶 Проверить все iperf</button>
             <button class="btn btn-primary btn-sm" onclick="openAssignModal('{{ tenant.name }}')">➕ Добавить IP</button>
             <button class="btn btn-danger btn-sm" onclick="deleteTenant('{{ tenant.name }}')" style="opacity: 0.7;">🗑 Удалить</button>
         </div>
@@ -149,6 +150,39 @@
                 </div>
                 {% endfor %}
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка массового iperf теста -->
+<div id="bulk-iperf-modal" class="modal" onclick="if(event.target.id==='bulk-iperf-modal' && !bulkIperfRunning) closeBulkIperfModal();">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3>📶 iperf все серверы — <span id="bulk-iperf-tenant" style="color: #f59e0b;"></span></h3>
+            <button class="modal-close" onclick="if(!bulkIperfRunning) closeBulkIperfModal()">✕</button>
+        </div>
+        <div class="modal-body">
+            <form id="bulk-iperf-form" onsubmit="submitBulkIperf(event)">
+                <div class="form-group">
+                    <label>Целевой сервер (IP или домен)</label>
+                    <input type="text" id="bulk-iperf-target" placeholder="192.168.1.1" required>
+                </div>
+                <div style="display: flex; gap: 0.75rem;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Порт</label>
+                        <input type="number" id="bulk-iperf-port" value="5201" min="1" max="65535">
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>Длительность (сек)</label>
+                        <input type="number" id="bulk-iperf-duration" value="10" min="1" max="60">
+                    </div>
+                </div>
+                <div id="bulk-iperf-results" style="display: none; margin-bottom: 1rem; max-height: 400px; overflow-y: auto;"></div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="if(!bulkIperfRunning) closeBulkIperfModal()">Закрыть</button>
+                    <button type="submit" class="btn btn-primary" id="bulk-iperf-submit-btn">▶ Запустить все</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -347,6 +381,87 @@ async function unassignIp(tenantName, ip) {
             setTimeout(() => location.reload(), 500);
         } else { showToast('Ошибка: ' + data.error, 'error'); }
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Массовый iperf тест ──────────────────────
+let bulkIperfTenant = null;
+let bulkIperfIps = [];
+let bulkIperfRunning = false;
+
+function openBulkIperfModal(tenant, ips) {
+    bulkIperfTenant = tenant;
+    bulkIperfIps = ips;
+    document.getElementById('bulk-iperf-tenant').textContent = `${tenant} (${ips.length} серверов)`;
+    document.getElementById('bulk-iperf-results').style.display = 'none';
+    document.getElementById('bulk-iperf-results').innerHTML = '';
+    document.getElementById('bulk-iperf-modal').classList.add('active');
+    document.getElementById('bulk-iperf-target').focus();
+}
+
+function closeBulkIperfModal() {
+    if (bulkIperfRunning) return;
+    document.getElementById('bulk-iperf-modal').classList.remove('active');
+    bulkIperfTenant = null;
+    bulkIperfIps = [];
+}
+
+async function submitBulkIperf(e) {
+    e.preventDefault();
+    if (bulkIperfRunning || !bulkIperfIps.length) return;
+
+    const target = document.getElementById('bulk-iperf-target').value.trim();
+    const port = document.getElementById('bulk-iperf-port').value;
+    const duration = document.getElementById('bulk-iperf-duration').value;
+    if (!target) { showToast('Введите целевой сервер', 'error'); return; }
+
+    const btn = document.getElementById('bulk-iperf-submit-btn');
+    const resultsDiv = document.getElementById('bulk-iperf-results');
+    bulkIperfRunning = true;
+    btn.disabled = true; btn.textContent = '⏳ Тестирую...';
+    resultsDiv.style.display = 'block';
+
+    // Создаём строки для каждого IP
+    resultsDiv.innerHTML = bulkIperfIps.map(ip =>
+        `<div id="bulk-res-${ip.replace(/\./g, '-')}" style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0.6rem; margin-bottom: 0.3rem; border-radius: 6px; background: rgba(0,0,0,0.2); border: 1px solid #334155; font-size: 0.8rem;">
+            <code style="color: #e2e8f0;">${ip}</code>
+            <span style="color: #94a3b8;">⏳ ожидание...</span>
+        </div>`
+    ).join('');
+
+    // Запускаем по очереди
+    for (const ip of bulkIperfIps) {
+        const rowId = 'bulk-res-' + ip.replace(/\./g, '-');
+        const row = document.getElementById(rowId);
+        if (row) row.querySelector('span').innerHTML = '<span style="color: #f59e0b;">🔄 тестирую...</span>';
+
+        const formData = new FormData();
+        formData.append('target', target);
+        formData.append('port', port);
+        formData.append('duration', duration);
+
+        try {
+            const res = await fetch(`/api/tenants/iperf/${ip}`, {method: 'POST', body: formData, credentials: 'same-origin'});
+            const data = await res.json();
+            if (row) {
+                if (data.ok) {
+                    const color = data.sent_mbps > 500 ? '#10b981' : data.sent_mbps > 100 ? '#f59e0b' : '#ef4444';
+                    row.querySelector('span').innerHTML = `<span>📤 <strong style="color: ${color};">${data.sent_mbps}</strong> 📥 <strong style="color: ${color};">${data.received_mbps}</strong> Мбит/с${data.retransmits ? ` · 🔄 ${data.retransmits}` : ''}</span>`;
+                    row.style.borderColor = color + '44';
+                } else {
+                    row.querySelector('span').innerHTML = `<span style="color: #ef4444;">❌ ${data.error.substring(0, 60)}</span>`;
+                    row.style.borderColor = '#ef444444';
+                }
+            }
+        } catch (err) {
+            if (row) {
+                row.querySelector('span').innerHTML = `<span style="color: #ef4444;">❌ ${err.message}</span>`;
+            }
+        }
+    }
+
+    bulkIperfRunning = false;
+    btn.disabled = false; btn.textContent = '▶ Запустить все';
+    showToast('Все тесты завершены', 'success');
 }
 
 // ─── iperf тест ───────────────────────────────
