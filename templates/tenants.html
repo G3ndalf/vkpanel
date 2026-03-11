@@ -42,26 +42,32 @@
 
     {% if tenant.accounts %}
     {% for acc in tenant.accounts %}
-    <div style="margin-bottom: 0.75rem;">
-        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem;">
-            <span style="font-size: 0.8rem; font-weight: 600; color: #94a3b8;">🔑 {{ acc.account }}</span>
-            <span style="font-size: 0.7rem; color: #64748b;">— {{ acc.ips|length }} IP</span>
+    <div style="margin-bottom: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <span style="font-size: 0.85rem; font-weight: 600; color: #94a3b8;">🔑 {{ acc.account }}</span>
+            <span style="font-size: 0.7rem; color: #64748b;">— {{ acc.total_ips }} IP, {{ acc.projects|length }} проект{{ 'ов' if acc.projects|length > 4 else ('а' if acc.projects|length > 1 else '') }}</span>
         </div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.4rem; padding-left: 0.5rem;">
-            {% for ip in acc.ips %}
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0.75rem; border-radius: 8px;
-                {% if ip.attached %}background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25);
-                {% else %}background: rgba(100,116,139,0.1); border: 1px solid rgba(100,116,139,0.2);{% endif %}">
-                <div>
-                    <code style="font-family: monospace; font-size: 0.9rem; color: {% if ip.attached %}#10b981{% else %}#e2e8f0{% endif %};">{{ ip.ip }}</code>
-                    <div style="font-size: 0.7rem; color: #64748b; margin-top: 0.15rem;">
-                        {{ ip.project }}{% if ip.server_name %} · {{ ip.server_name }}{% endif %}
-                    </div>
-                </div>
-                <button class="btn btn-danger btn-sm" onclick="unassignIp('{{ tenant.name }}', '{{ ip.ip }}')" title="Отвязать IP" style="opacity: 0.6; padding: 0.15rem 0.4rem;">✕</button>
+        {% for proj in acc.projects %}
+        <div style="margin-left: 0.75rem; margin-bottom: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem;">
+                <span style="font-size: 0.75rem; color: #64748b;">📁 {{ proj.project }}</span>
+                <span style="font-size: 0.65rem; color: #475569;">· {{ proj.ips|length }} IP</span>
             </div>
-            {% endfor %}
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.3rem; padding-left: 0.5rem;">
+                {% for ip in proj.ips %}
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0.6rem; border-radius: 6px;
+                    {% if ip.attached %}background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.25);
+                    {% else %}background: rgba(100,116,139,0.1); border: 1px solid rgba(100,116,139,0.2);{% endif %}">
+                    <div>
+                        <code style="font-family: monospace; font-size: 0.85rem; color: {% if ip.attached %}#10b981{% else %}#e2e8f0{% endif %};">{{ ip.ip }}</code>
+                        {% if ip.server_name %}<span style="font-size: 0.65rem; color: #475569; margin-left: 0.3rem;">{{ ip.server_name }}</span>{% endif %}
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="unassignIp('{{ tenant.name }}', '{{ ip.ip }}')" title="Отвязать IP" style="opacity: 0.6; padding: 0.1rem 0.35rem; font-size: 0.7rem;">✕</button>
+                </div>
+                {% endfor %}
+            </div>
         </div>
+        {% endfor %}
     </div>
     {% endfor %}
     {% else %}

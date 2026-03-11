@@ -1082,15 +1082,26 @@ async def tenants_page(request: Request):
                 "server_name": info.get("server_name"),
             })
 
-        # Группируем IP по аккаунтам, сортируем аккаунты по алфавиту
-        accounts = {}
+        # Группируем IP: аккаунт → проект → список IP
+        # Сортируем аккаунты и проекты по алфавиту
+        acc_proj = {}
         for ip_data in ips_enriched:
             acc = ip_data["account"]
-            accounts.setdefault(acc, []).append(ip_data)
-        accounts_sorted = [
-            {"account": acc, "ips": ips}
-            for acc, ips in sorted(accounts.items(), key=lambda x: x[0].lower())
-        ]
+            proj = ip_data["project"]
+            acc_proj.setdefault(acc, {}).setdefault(proj, []).append(ip_data)
+
+        accounts_sorted = []
+        for acc in sorted(acc_proj.keys(), key=str.lower):
+            projects_sorted = [
+                {"project": proj, "ips": ips}
+                for proj, ips in sorted(acc_proj[acc].items(), key=lambda x: x[0].lower())
+            ]
+            total_ips_in_acc = sum(len(p["ips"]) for p in projects_sorted)
+            accounts_sorted.append({
+                "account": acc,
+                "projects": projects_sorted,
+                "total_ips": total_ips_in_acc,
+            })
 
         tenants_enriched.append({
             "name": t["name"],
