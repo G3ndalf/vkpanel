@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 SSH_KEYS_DIR = os.getenv("SSH_KEYS_DIR", "/opt/vkpanel/ssh_keys")
 
+# Актуальная версия агента — должна совпадать с AGENT_VERSION в agent_cron.py
+CURRENT_AGENT_VERSION = "1.1.0"
+
 # Содержимое агента — читается один раз при старте
 _AGENT_SCRIPT: Optional[str] = None
 
@@ -49,6 +52,8 @@ def _get_agent_script() -> str:
 _EMBEDDED_AGENT = '''#!/usr/bin/env python3
 """Traffic Agent — cron version with reboot persistence."""
 import os, sys, json, urllib.request, logging
+
+AGENT_VERSION = "1.1.0"
 
 CONFIG = {"SERVER_URL": "", "API_KEY": "", "LOG_FILE": "/var/log/traffic_agent.log"}
 STATE_DIR = "/var/lib/traffic_agent"
@@ -126,7 +131,7 @@ def save_daily_snapshot(stats):
 
 def send_report(stats):
     url = CONFIG["SERVER_URL"].rstrip("/") + "/api/v1/report"
-    data = json.dumps({"interfaces": stats}).encode("utf-8")
+    data = json.dumps({"interfaces": stats, "version": AGENT_VERSION}).encode("utf-8")
     req = urllib.request.Request(url, data=data,
         headers={"Content-Type": "application/json", "X-API-Key": CONFIG["API_KEY"]}, method="POST")
     try:
@@ -196,6 +201,22 @@ def get_ssh_key_path(data: dict, ip: str, tenant_name: Optional[str] = None) -> 
 def get_ssh_user(data: dict, ip: str) -> str:
     """Получить SSH пользователя для IP (по умолчанию root)."""
     return data.get("monitoring", {}).get("ip_ssh_users", {}).get(ip, "ubuntu")
+
+
+def check_agent_version(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:
+    """Проверяет версию агента на сервере. Возвращает {"version": str|None, "up_to_date": bool}."""
+    try:
+        client = _ssh_connect_by_key(ip, key_path, ssh_user)
+        code, out, _ = _ssh_exec(client, "python3 -c \"exec(open('/opt/traffic_agent/agent.py').read().split('CONFIG')[0]); print(AGENT_VERSION)\" 2>/dev/null || echo NONE", timeout=10)
+        client.close()
+        version = out.strip() if code == 0 and out.strip() != "NONE" else None
+        return {
+            "version": version,
+            "up_to_date": version == CURRENT_AGENT_VERSION if version else False,
+            "current_version": CURRENT_AGENT_VERSION,
+        }
+    except Exception as e:
+        return {"version": None, "up_to_date": False, "current_version": CURRENT_AGENT_VERSION, "error": str(e)[:200]}
 
 
 def check_ssh_reachable(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:

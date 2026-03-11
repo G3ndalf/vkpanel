@@ -8,6 +8,8 @@ Traffic Agent — однократный запуск для cron.
 не терялся — к текущим значениям прибавляется накопленная база.
 """
 
+AGENT_VERSION = "1.1.0"  # Версия агента — бампить при изменениях
+
 import os
 import sys
 import json
@@ -169,7 +171,7 @@ def save_daily_snapshot(stats):
 def send_report(stats):
     """Отправляет данные на сервер биллинга."""
     url = CONFIG["SERVER_URL"].rstrip("/") + "/api/v1/report"
-    data = json.dumps({"interfaces": stats}).encode("utf-8")
+    data = json.dumps({"interfaces": stats, "version": AGENT_VERSION}).encode("utf-8")
 
     req = urllib.request.Request(
         url,

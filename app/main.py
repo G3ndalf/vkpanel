@@ -35,7 +35,8 @@ from .ssh import get_script_status, control_script, get_floating_ips_via_cli, ch
 from .openstack import get_project_floating_ips
 from .monitoring import (
     save_ssh_key, get_ssh_key_path, get_ssh_user,
-    check_ssh_reachable, deploy_agent, collect_traffic, get_tenant_ips,
+    check_ssh_reachable, check_agent_version, deploy_agent, collect_traffic,
+    get_tenant_ips, CURRENT_AGENT_VERSION,
 )
 
 # ─── Логирование ──────────────────────────────────────────────
@@ -1606,6 +1607,7 @@ async def monitoring_page(request: Request):
                 "is_reachable": status.get("is_reachable"),
                 "last_check": status.get("last_check"),
                 "last_traffic": last_traffic,
+                "agent_version": status.get("agent_version"),
             })
 
         # Суммарный трафик арендатора (исходящий для расчёта оплаты)
@@ -1662,6 +1664,7 @@ async def monitoring_page(request: Request):
         "total_ips": total_ips,
         "deployed_count": deployed_count,
         "reachable_count": reachable_count,
+        "current_agent_version": CURRENT_AGENT_VERSION,
     })
 
 
@@ -1770,6 +1773,7 @@ async def api_monitoring_deploy_ip(request: Request, ip: str):
         ip_status.setdefault(ip, {})["agent_deployed"] = True
         ip_status[ip]["api_key"] = result["api_key"]
         ip_status[ip]["deployed_at"] = datetime.utcnow().isoformat()
+        ip_status[ip]["agent_version"] = CURRENT_AGENT_VERSION
 
         # Сохраняем маппинг api_key -> ip для приёма отчётов
         api_keys = monitoring.setdefault("api_keys", {})
@@ -1820,6 +1824,7 @@ async def api_monitoring_deploy_tenant(request: Request, tenant_name: str):
             ip_status.setdefault(r["ip"], {})["agent_deployed"] = True
             ip_status[r["ip"]]["api_key"] = r.get("api_key", "")
             ip_status[r["ip"]]["deployed_at"] = datetime.utcnow().isoformat()
+            ip_status[r["ip"]]["agent_version"] = CURRENT_AGENT_VERSION
             if r.get("api_key"):
                 api_keys[r["api_key"]] = r["ip"]
     save_data(data)
@@ -1902,6 +1907,45 @@ async def api_monitoring_check_tenant(request: Request, tenant_name: str):
     return JSONResponse({
         "ok": True,
         "message": f"Доступно: {reachable}/{len(results)}",
+        "results": results,
+    })
+
+
+@app.post("/api/monitoring/check-version/tenant/{tenant_name}")
+async def api_monitoring_check_version_tenant(request: Request, tenant_name: str):
+    """Проверить версию агента на всех серверах арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    ips = get_tenant_ips(data, tenant_name)
+    if not ips:
+        return JSONResponse({"ok": False, "error": "У арендатора нет IP"}, status_code=400)
+
+    def check_one(ip: str) -> dict:
+        key_path = get_ssh_key_path(data, ip, tenant_name)
+        if not key_path:
+            return {"ip": ip, "version": None, "up_to_date": False, "error": "SSH ключ не найден"}
+        ssh_user = get_ssh_user(data, ip)
+        result = check_agent_version(ip, key_path, ssh_user)
+        return {"ip": ip, **result}
+
+    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
+        results = list(executor.map(check_one, ips))
+
+    # Сохраняем версии в ip_status
+    monitoring = data.setdefault("monitoring", {})
+    ip_status = monitoring.setdefault("ip_status", {})
+    for r in results:
+        if r.get("version"):
+            ip_status.setdefault(r["ip"], {})["agent_version"] = r["version"]
+    save_data(data)
+
+    up_to_date = sum(1 for r in results if r.get("up_to_date"))
+    return JSONResponse({
+        "ok": True,
+        "message": f"Актуальная версия ({CURRENT_AGENT_VERSION}): {up_to_date}/{len(results)}",
+        "current_version": CURRENT_AGENT_VERSION,
         "results": results,
     })
 
@@ -2077,6 +2121,10 @@ async def api_v1_report(request: Request):
     ip_status = monitoring.setdefault("ip_status", {})
     ip_status.setdefault(ip, {})["last_report"] = now_msk().isoformat()
     ip_status[ip]["is_reachable"] = True
+    # Сохраняем версию агента
+    agent_version = body.get("version")
+    if agent_version:
+        ip_status[ip]["agent_version"] = agent_version
 
     save_data(data)
     logger.info(f"Traffic report from {ip}: {len(interfaces)} interfaces")

@@ -44,6 +44,7 @@
             </label>
             <button class="btn btn-primary btn-sm" onclick="deployTenant('{{ tenant.name }}')">🚀 Развернуть мониторинг</button>
             <button class="btn btn-secondary btn-sm" onclick="checkTenant('{{ tenant.name }}')">🔍 Проверить</button>
+            <button class="btn btn-secondary btn-sm" onclick="checkVersionsTenant('{{ tenant.name }}')">🔄 Проверить версии</button>
             <button class="btn btn-secondary btn-sm" onclick="openTrafficModal('{{ tenant.name }}', null)">📈 Сбор трафика</button>
         </div>
     </div>
@@ -57,6 +58,7 @@
                     <th>SSH user</th>
                     <th>SSH ключ</th>
                     <th>Агент</th>
+                    <th>Версия</th>
                     <th style="cursor:pointer;user-select:none;" onclick="sortTable(this, 'status')">Статус <span class="sort-icon">⇅</span></th>
                     <th style="cursor:pointer;user-select:none;" onclick="sortTable(this, 'traffic')">Исх. трафик <span class="sort-icon">⇅</span></th>
                     <th>Действия</th>
@@ -84,6 +86,17 @@
                         <span class="badge badge-green">✓ Да</span>
                         {% else %}
                         <span class="badge badge-red">✕ Нет</span>
+                        {% endif %}
+                    </td>
+                    <td id="version-{{ ip.ip.replace('.', '-') }}">
+                        {% if ip.agent_version %}
+                            {% if ip.agent_version == current_agent_version %}
+                            <span class="badge badge-green" title="Актуальная">{{ ip.agent_version }}</span>
+                            {% else %}
+                            <span class="badge badge-red" title="Устаревшая (актуальная: {{ current_agent_version }})">{{ ip.agent_version }} ⚠️</span>
+                            {% endif %}
+                        {% else %}
+                        <span style="color: #64748b; font-size: 0.8rem;">—</span>
                         {% endif %}
                     </td>
                     <td id="status-{{ ip.ip.replace('.', '-') }}">
@@ -413,6 +426,32 @@ async function checkTenant(name) {
             });
         }
         showToast(data.message || 'Проверка завершена', data.ok ? 'success' : 'error');
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── Проверка версий агентов ──────────────────
+async function checkVersionsTenant(name) {
+    showToast(`Проверяю версии агентов ${name}...`, 'info', 15000);
+    try {
+        const res = await fetch(`/api/monitoring/check-version/tenant/${encodeURIComponent(name)}`, {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        if (data.results) {
+            data.results.forEach(r => {
+                const el = document.getElementById('version-' + r.ip.replace(/\./g, '-'));
+                if (el) {
+                    if (r.version) {
+                        if (r.up_to_date) {
+                            el.innerHTML = `<span class="badge badge-green">${r.version}</span>`;
+                        } else {
+                            el.innerHTML = `<span class="badge badge-red" title="Актуальная: ${r.current_version}">${r.version} ⚠️</span>`;
+                        }
+                    } else {
+                        el.innerHTML = `<span class="badge badge-red" title="${r.error || 'Не установлен'}">нет</span>`;
+                    }
+                }
+            });
+        }
+        showToast(data.message || 'Проверка завершена', 'success');
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
