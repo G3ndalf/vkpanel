@@ -426,6 +426,27 @@ def collect_traffic(ip: str, key_path: str, ssh_user: str, days: int = 1,
         return {"ok": False, "traffic": {}, "total_rx_gb": 0, "total_tx_gb": 0, "total_gb": 0, "error": str(e)[:300]}
 
 
+def remove_agent(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:
+    """
+    Удаляет агент мониторинга с сервера.
+    Убирает: скрипт, конфиг, cron, state, логи.
+    """
+    try:
+        client = _ssh_connect_by_key(ip, key_path, ssh_user)
+
+        # Удаляем cron задачу
+        _ssh_exec(client, "(crontab -l 2>/dev/null | grep -v traffic_agent) | crontab -")
+
+        # Удаляем файлы агента
+        _ssh_exec(client, "rm -rf /opt/traffic_agent /var/lib/traffic_agent /etc/traffic_agent.conf /var/log/traffic_agent.log")
+
+        client.close()
+        return {"ok": True, "message": f"Агент удалён с {ip}"}
+    except Exception as e:
+        logger.error(f"Remove agent from {ip} failed: {e}")
+        return {"ok": False, "message": str(e)[:300]}
+
+
 def get_tenant_ips(data: dict, tenant_name: str) -> list[str]:
     """Получить список IP арендатора."""
     tenants = data.get("tenants", [])

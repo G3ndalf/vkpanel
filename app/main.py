@@ -36,7 +36,7 @@ from .openstack import get_project_floating_ips
 from .monitoring import (
     save_ssh_key, get_ssh_key_path, get_ssh_user,
     check_ssh_reachable, check_agent_version, deploy_agent, collect_traffic,
-    get_tenant_ips, CURRENT_AGENT_VERSION,
+    remove_agent, get_tenant_ips, CURRENT_AGENT_VERSION,
 )
 
 # ─── Логирование ──────────────────────────────────────────────
@@ -2160,6 +2160,65 @@ async def api_monitoring_traffic_tenant(
     if warnings:
         resp["warning"] = f"Снапшоты отсутствуют на {len(warnings)} из {len(results)} серверов. Обновите агент."
     return JSONResponse(resp)
+
+
+@app.post("/api/monitoring/remove-all-agents")
+async def api_monitoring_remove_all_agents(request: Request):
+    """Удалить агенты мониторинга со ВСЕХ серверов."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    monitoring = data.get("monitoring", {})
+    ip_status = monitoring.get("ip_status", {})
+
+    # Собираем все IP с развёрнутыми агентами
+    deployed_ips = [ip for ip, status in ip_status.items() if status.get("agent_deployed")]
+    if not deployed_ips:
+        return JSONResponse({"ok": True, "message": "Нет развёрнутых агентов"})
+
+    def remove_one(ip: str) -> dict:
+        # Определяем арендатора для этого IP
+        tenant_name = None
+        for t in data.get("tenants", []):
+            if ip in t.get("ips", []):
+                tenant_name = t["name"]
+                break
+        key_path = get_ssh_key_path(data, ip, tenant_name)
+        if not key_path:
+            return {"ip": ip, "ok": False, "message": "SSH ключ не найден"}
+        ssh_user = get_ssh_user(data, ip)
+        return {"ip": ip, **remove_agent(ip, key_path, ssh_user)}
+
+    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
+        results = list(executor.map(remove_one, deployed_ips))
+
+    # Обновляем данные: убираем статусы агентов
+    ok_count = 0
+    for r in results:
+        if r.get("ok"):
+            ok_count += 1
+            ip = r["ip"]
+            if ip in ip_status:
+                ip_status[ip]["agent_deployed"] = False
+                ip_status[ip].pop("api_key", None)
+                ip_status[ip].pop("agent_version", None)
+                ip_status[ip].pop("deployed_at", None)
+            # Удаляем api_key маппинг
+            api_keys = monitoring.get("api_keys", {})
+            to_remove = [k for k, v in api_keys.items() if v == ip]
+            for k in to_remove:
+                del api_keys[k]
+
+    # Очищаем данные трафика
+    monitoring.pop("traffic_data", None)
+    save_data(data)
+
+    return JSONResponse({
+        "ok": ok_count > 0,
+        "message": f"Удалено с {ok_count}/{len(deployed_ips)} серверов",
+        "results": results,
+    })
 
 
 @app.post("/api/v1/report")
