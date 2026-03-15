@@ -199,29 +199,32 @@ def deploy_agent(ip: str, key_path: str, ssh_user: str, panel_url: str) -> dict:
     try:
         client = _ssh_connect_by_key(ip, key_path, ssh_user)
 
+        # sudo prefix: если не root, все команды через sudo
+        sudo = "" if ssh_user == "root" else "sudo "
+
         # Устанавливаем python3 если нет
-        _ssh_exec(client, "which python3 || (apt-get update -qq && apt-get install -y -qq python3)", timeout=120)
+        _ssh_exec(client, f"which python3 || ({sudo}apt-get update -qq && {sudo}apt-get install -y -qq python3)", timeout=120)
 
         # Создаём директории
-        _ssh_exec(client, "mkdir -p /opt/traffic_agent /var/lib/traffic_agent")
+        _ssh_exec(client, f"{sudo}mkdir -p /opt/traffic_agent /var/lib/traffic_agent")
 
         # Загружаем скрипт через base64
-        _ssh_exec(client, f"echo '{agent_b64}' | base64 -d > /opt/traffic_agent/agent.py && chmod +x /opt/traffic_agent/agent.py")
+        _ssh_exec(client, f"echo '{agent_b64}' | {sudo}tee /opt/traffic_agent/agent.py > /dev/null && {sudo}chmod +x /opt/traffic_agent/agent.py")
 
         # Создаём конфиг
         conf = f"SERVER_URL={panel_url}\nAPI_KEY={api_key}\nLOG_FILE=/var/log/traffic_agent.log"
         conf_b64 = base64.b64encode(conf.encode()).decode()
-        _ssh_exec(client, f"echo '{conf_b64}' | base64 -d > /etc/traffic_agent.conf && chmod 600 /etc/traffic_agent.conf")
+        _ssh_exec(client, f"echo '{conf_b64}' | base64 -d | {sudo}tee /etc/traffic_agent.conf > /dev/null && {sudo}chmod 600 /etc/traffic_agent.conf")
 
         # Cron: 02:00 и 14:00 МСК (= 23:00 и 11:00 UTC)
         cron_job = "0 23,11 * * * /usr/bin/python3 /opt/traffic_agent/agent.py >> /var/log/traffic_agent.log 2>&1"
         _ssh_exec(client, f'(crontab -l 2>/dev/null | grep -v traffic_agent; echo "{cron_job}") | crontab -')
 
         # Удаляем старый systemd сервис если есть
-        _ssh_exec(client, "systemctl stop traffic-agent 2>/dev/null; systemctl disable traffic-agent 2>/dev/null; rm -f /etc/systemd/system/traffic-agent.service; systemctl daemon-reload 2>/dev/null")
+        _ssh_exec(client, f"{sudo}systemctl stop traffic-agent 2>/dev/null; {sudo}systemctl disable traffic-agent 2>/dev/null; {sudo}rm -f /etc/systemd/system/traffic-agent.service; {sudo}systemctl daemon-reload 2>/dev/null")
 
         # Первый запуск
-        code, out, err = _ssh_exec(client, "/usr/bin/python3 /opt/traffic_agent/agent.py", timeout=60)
+        code, out, err = _ssh_exec(client, f"{sudo}/usr/bin/python3 /opt/traffic_agent/agent.py", timeout=60)
         client.close()
 
         if code == 0:
@@ -239,7 +242,8 @@ def trigger_agent(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:
     """Принудительно запускает агент на сервере (он сам отправит отчёт на панель)."""
     try:
         client = _ssh_connect_by_key(ip, key_path, ssh_user)
-        code, out, err = _ssh_exec(client, "/usr/bin/python3 /opt/traffic_agent/agent.py", timeout=60)
+        sudo = "" if ssh_user == "root" else "sudo "
+        code, out, err = _ssh_exec(client, f"{sudo}/usr/bin/python3 /opt/traffic_agent/agent.py", timeout=60)
         client.close()
         if code == 0:
             return {"ok": True, "message": f"Агент на {ip} отправил отчёт"}
@@ -257,12 +261,13 @@ def remove_agent(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:
     """
     try:
         client = _ssh_connect_by_key(ip, key_path, ssh_user)
+        sudo = "" if ssh_user == "root" else "sudo "
 
         # Удаляем cron задачу
         _ssh_exec(client, "(crontab -l 2>/dev/null | grep -v traffic_agent) | crontab -")
 
         # Удаляем файлы агента
-        _ssh_exec(client, "rm -rf /opt/traffic_agent /var/lib/traffic_agent /etc/traffic_agent.conf /var/log/traffic_agent.log")
+        _ssh_exec(client, f"{sudo}rm -rf /opt/traffic_agent /var/lib/traffic_agent /etc/traffic_agent.conf /var/log/traffic_agent.log")
 
         client.close()
         return {"ok": True, "message": f"Агент удалён с {ip}"}
