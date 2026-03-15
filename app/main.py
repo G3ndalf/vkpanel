@@ -2098,11 +2098,14 @@ async def api_monitoring_reset_traffic(request: Request):
         return JSONResponse({"ok": True, "message": "Нет данных трафика"})
 
     for ip in traffic_data:
+        # Запоминаем текущий total как базу — при отображении вычитаем
+        current_total = traffic_data[ip].get("total_tx_bytes", 0)
+        traffic_data[ip]["base_tx_bytes"] = traffic_data[ip].get("base_tx_bytes", 0) + current_total
         traffic_data[ip]["total_tx_bytes"] = 0
         traffic_data[ip]["total_tx_gb"] = 0
-        traffic_data[ip]["last_raw_tx"] = 0
         traffic_data[ip]["last_delta_bytes"] = 0
         traffic_data[ip]["reports"] = []
+        # НЕ трогаем last_raw_tx — агент пришлёт то же значение
 
     save_data(data)
     return JSONResponse({"ok": True, "message": f"Трафик сброшен для {len(traffic_data)} IP"})
