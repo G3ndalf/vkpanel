@@ -235,6 +235,21 @@ def deploy_agent(ip: str, key_path: str, ssh_user: str, panel_url: str) -> dict:
         return {"ok": False, "message": str(e)[:300], "api_key": ""}
 
 
+def trigger_agent(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:
+    """Принудительно запускает агент на сервере (он сам отправит отчёт на панель)."""
+    try:
+        client = _ssh_connect_by_key(ip, key_path, ssh_user)
+        code, out, err = _ssh_exec(client, "/usr/bin/python3 /opt/traffic_agent/agent.py", timeout=60)
+        client.close()
+        if code == 0:
+            return {"ok": True, "message": f"Агент на {ip} отправил отчёт"}
+        else:
+            return {"ok": False, "message": f"{(err or out)[:200]}"}
+    except Exception as e:
+        logger.error(f"Trigger agent on {ip} failed: {e}")
+        return {"ok": False, "message": str(e)[:300]}
+
+
 def remove_agent(ip: str, key_path: str, ssh_user: str = "ubuntu") -> dict:
     """
     Удаляет агент мониторинга с сервера.

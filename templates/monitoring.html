@@ -48,7 +48,7 @@
             <button class="btn btn-primary btn-sm" onclick="deployTenant('{{ tenant.name }}')">🚀 Развернуть мониторинг</button>
             <button class="btn btn-secondary btn-sm" onclick="checkTenant('{{ tenant.name }}')">🔍 Проверить</button>
             <button class="btn btn-secondary btn-sm" onclick="checkVersionsTenant('{{ tenant.name }}')">🔄 Проверить версии</button>
-            <!-- Трафик приходит автоматически каждые 12ч -->
+            <button class="btn btn-secondary btn-sm" onclick="collectTenant('{{ tenant.name }}')">📈 Сбор трафика</button>
         </div>
     </div>
 
@@ -122,7 +122,7 @@
                         <div class="actions" style="flex-wrap: wrap;">
                             <button class="btn btn-primary btn-sm" onclick="deployIp('{{ ip.ip }}')" title="Развернуть агент">🚀</button>
                             <button class="btn btn-secondary btn-sm" onclick="checkIp('{{ ip.ip }}')" title="Проверить доступность">🔍</button>
-                            <!-- Трафик автоматически -->
+                            <button class="btn btn-secondary btn-sm" onclick="collectIp('{{ ip.ip }}')" title="Собрать трафик сейчас">📈</button>
                         </div>
                     </td>
                 </tr>
@@ -470,6 +470,27 @@ function sortTable(th, key) {
     });
 
     rows.forEach(r => tbody.appendChild(r));
+}
+
+// ─── Сбор трафика (принудительный) ────────────
+async function collectIp(ip) {
+    showToast(`Собираю трафик с ${ip}...`, 'info', 15000);
+    try {
+        const res = await fetch(`/api/monitoring/collect/ip/${ip}`, {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        showToast(data.message || data.error, data.ok ? 'success' : 'error');
+        if (data.ok) setTimeout(() => location.reload(), 1000);
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+async function collectTenant(name) {
+    showToast(`Собираю трафик со всех серверов ${name}...`, 'info', 30000);
+    try {
+        const res = await fetch(`/api/monitoring/collect/tenant/${encodeURIComponent(name)}`, {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        showToast(data.message, data.ok ? 'success' : 'error');
+        if (data.ok) setTimeout(() => location.reload(), 1500);
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
 // ─── Удаление всех агентов ────────────────────

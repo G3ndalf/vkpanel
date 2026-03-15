@@ -35,7 +35,7 @@ from .ssh import get_script_status, control_script, get_floating_ips_via_cli, ch
 from .openstack import get_project_floating_ips
 from .monitoring import (
     save_ssh_key, get_ssh_key_path, get_ssh_user,
-    check_ssh_reachable, check_agent_version, deploy_agent,
+    check_ssh_reachable, check_agent_version, deploy_agent, trigger_agent,
     remove_agent, get_tenant_ips, CURRENT_AGENT_VERSION,
 )
 
@@ -2029,6 +2029,57 @@ async def api_monitoring_check_version_tenant(request: Request, tenant_name: str
         "ok": True,
         "message": f"Актуальная версия ({CURRENT_AGENT_VERSION}): {up_to_date}/{len(results)}",
         "current_version": CURRENT_AGENT_VERSION,
+        "results": results,
+    })
+
+
+@app.post("/api/monitoring/collect/ip/{ip:path}")
+async def api_monitoring_collect_ip(request: Request, ip: str):
+    """Принудительно запустить агент на одном IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    tenant_name = None
+    for t in data.get("tenants", []):
+        if ip in t.get("ips", []):
+            tenant_name = t["name"]
+            break
+
+    key_path = get_ssh_key_path(data, ip, tenant_name)
+    if not key_path:
+        return JSONResponse({"ok": False, "error": "SSH ключ не найден"}, status_code=400)
+
+    ssh_user = get_ssh_user(data, ip)
+    result = trigger_agent(ip, key_path, ssh_user)
+    return JSONResponse(result)
+
+
+@app.post("/api/monitoring/collect/tenant/{tenant_name}")
+async def api_monitoring_collect_tenant(request: Request, tenant_name: str):
+    """Принудительно запустить агенты на всех IP арендатора."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    ips = get_tenant_ips(data, tenant_name)
+    if not ips:
+        return JSONResponse({"ok": False, "error": "У арендатора нет IP"}, status_code=400)
+
+    def collect_one(ip: str) -> dict:
+        key_path = get_ssh_key_path(data, ip, tenant_name)
+        if not key_path:
+            return {"ip": ip, "ok": False, "message": "SSH ключ не найден"}
+        ssh_user = get_ssh_user(data, ip)
+        return {"ip": ip, **trigger_agent(ip, key_path, ssh_user)}
+
+    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
+        results = list(executor.map(collect_one, ips))
+
+    ok_count = sum(1 for r in results if r.get("ok"))
+    return JSONResponse({
+        "ok": ok_count > 0,
+        "message": f"Собрано с {ok_count}/{len(results)} серверов",
         "results": results,
     })
 
