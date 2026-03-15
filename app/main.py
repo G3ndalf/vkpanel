@@ -2364,10 +2364,45 @@ async def api_v1_found_ip(request: Request):
     if len(found_ips) > 1000:
         data["found_ips"] = found_ips[-1000:]
 
-    save_data(data)
-    logger.info(f"Found IP: {ip} subnet={entry['subnet']} service={entry['service']}")
+    # --- Автоостановка: проверяем лимит IP на проекте ---
+    MAX_FIP = 2
+    os_project_name = body.get("project", "")
+    projects_cache = data.get("projects_cache", {})
+    action = "continue"
+    ip_count = 0
 
-    return {"status": "ok"}
+    # Находим проект в кэше по os_project_name
+    panel_project = None
+    for pname, pcache in projects_cache.items():
+        if pcache.get("os_project_name") == os_project_name:
+            panel_project = pname
+            ip_count = len(pcache.get("ips", []))
+            break
+
+    # Добавляем пойманный IP в кэш проекта (чтобы счёт был актуальным)
+    if panel_project:
+        cached_ips = projects_cache[panel_project].setdefault("ips", [])
+        # Не дублируем если уже есть
+        if not any(i.get("ip") == ip for i in cached_ips):
+            cached_ips.append({
+                "ip": ip,
+                "id": body.get("fip_id", ""),
+                "status": "DOWN",
+                "fixed_ip": "",
+                "port_id": None,
+                "attached": False,
+                "server_name": None,
+            })
+            ip_count = len(cached_ips)
+
+    if ip_count >= MAX_FIP:
+        action = "stop"
+        logger.info(f"IP limit reached for project {os_project_name} ({ip_count}/{MAX_FIP}), sending stop")
+
+    save_data(data)
+    logger.info(f"Found IP: {ip} subnet={entry['subnet']} project={os_project_name} ips_on_project={ip_count} action={action}")
+
+    return {"status": "ok", "action": action, "ip_count": ip_count}
 
 
 @app.get("/found-ips", response_class=HTMLResponse)
