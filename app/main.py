@@ -489,15 +489,16 @@ async def api_update_subnets(request: Request, server_id: int, script_id: int):
         return JSONResponse({"ok": False, "error": "No subnets selected"}, status_code=400)
 
     # Собираем выбранные подсети из ALL_SUBNETS
+    # end = последний хост CIDR (broadcast - 1), чтобы скрипт принимал любой IP из подсети
+    import ipaddress
     subnets_by_name = {s["name"]: s for s in ALL_SUBNETS}
     selected = []
     for name in subnet_names:
         if name in subnets_by_name:
             s = subnets_by_name[name]
-            entry = {"name": s["name"], "subnet_id": s["subnet_id"], "cidr": s["cidr"]}
-            if s.get("end"):
-                entry["end"] = s["end"]
-            selected.append(entry)
+            net = ipaddress.ip_network(s["cidr"])
+            end = str(net.broadcast_address - 1)
+            selected.append({"name": s["name"], "subnet_id": s["subnet_id"], "cidr": s["cidr"], "end": end})
 
     if not selected:
         return JSONResponse({"ok": False, "error": "No valid subnets found"}, status_code=400)
