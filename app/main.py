@@ -51,11 +51,55 @@ logger = logging.getLogger(__name__)
 # ─── FastAPI приложение ───────────────────────────────────────
 
 
+async def _auto_refresh_projects():
+    """Фоновая задача: обновление projects_cache каждый день в 07:00 MSK."""
+    import asyncio
+    while True:
+        now = now_msk()
+        # Следующее 07:00
+        target = now.replace(hour=7, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        wait_sec = (target - now).total_seconds()
+        logger.info(f"Auto-refresh projects: next run at {target.isoformat()}, sleeping {wait_sec:.0f}s")
+        await asyncio.sleep(wait_sec)
+
+        logger.info("Auto-refresh projects: starting...")
+        try:
+            data = load_data()
+            projects = data.get("projects", [])
+            if projects:
+                with ThreadPoolExecutor(max_workers=MAX_CLOUD_WORKERS) as executor:
+                    results = list(executor.map(get_project_floating_ips, projects))
+
+                projects_cache = {}
+                total = 0
+                for r in results:
+                    projects_cache[r["name"]] = {
+                        "ips": r["ips"],
+                        "error": r["error"],
+                        "os_project_name": r.get("os_project_name"),
+                    }
+                    total += len(r["ips"])
+
+                data["projects_cache"] = projects_cache
+                data["projects_last_update"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+                save_data(data)
+                logger.info(f"Auto-refresh projects: done, {total} IPs across {len(projects)} projects")
+            else:
+                logger.info("Auto-refresh projects: no projects configured, skipping")
+        except Exception as e:
+            logger.error(f"Auto-refresh projects failed: {e!r}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown events."""
+    import asyncio
     logger.info("VK IP Panel starting...")
+    task = asyncio.create_task(_auto_refresh_projects())
     yield
+    task.cancel()
     logger.info("VK IP Panel stopping...")
 
 
