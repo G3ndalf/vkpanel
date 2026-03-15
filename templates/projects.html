@@ -228,14 +228,14 @@
         </div>
         <div class="modal-body" style="padding: 1rem;">
             <p style="color: #94a3b8; margin-bottom: 1rem; font-size: 0.85rem;">Выберите скрипт на сервере. Проект будет назначен на выбранный скрипт и запущен.</p>
-            
+
             {% for server in servers_scripts %}
             <div style="margin-bottom: 1rem; border: 1px solid #334155; border-radius: 8px; overflow: hidden;">
                 <div style="padding: 0.6rem 1rem; background: rgba(245,158,11,0.08); border-bottom: 1px solid #334155; font-weight: 600;">
                     🖥 {{ server.name }}
                 </div>
                 {% for script in server.scripts %}
-                <div class="script-pick-row" onclick="launchOnScript({{ server.id }}, {{ script.id }}, '{{ server.name }}', '{{ script.name }}', this)"
+                <div class="script-pick-row" onclick="selectScriptForSubnets({{ server.id }}, {{ script.id }}, '{{ server.name }}', '{{ script.name }}')"
                      style="display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 1rem; cursor: pointer; border-bottom: 1px solid rgba(51,65,85,0.5); transition: background 0.15s;"
                      onmouseenter="this.style.background='rgba(245,158,11,0.1)'" onmouseleave="this.style.background='transparent'">
                     <div style="display: flex; align-items: center; gap: 0.6rem;">
@@ -259,6 +259,33 @@
                 {% endfor %}
             </div>
             {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- Модалка выбора подсетей -->
+<div id="subnets-modal" class="modal" onclick="if(event.target.id==='subnets-modal') closeSubnetsModal();">
+    <div class="modal-content" style="max-width: 750px;">
+        <div class="modal-header">
+            <h3>📡 Подсети — <span id="subnets-modal-script" style="color: #f59e0b;"></span></h3>
+            <button class="modal-close" onclick="closeSubnetsModal()">✕</button>
+        </div>
+        <div class="modal-body" style="padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                <p style="color: #94a3b8; font-size: 0.85rem; margin: 0;">Выберите подсети для поиска IP</p>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button onclick="toggleAllSubnets(true)" class="btn btn-sm" style="font-size: 0.75rem; padding: 0.3rem 0.6rem;">Все</button>
+                    <button onclick="toggleAllSubnets(false)" class="btn btn-sm" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; background: #475569;">Снять</button>
+                </div>
+            </div>
+            <div id="subnets-list" style="max-height: 50vh; overflow-y: auto; border: 1px solid #334155; border-radius: 8px;">
+            </div>
+            <div style="margin-top: 1rem; display: flex; justify-content: space-between; align-items: center;">
+                <span id="subnets-count" style="color: #94a3b8; font-size: 0.85rem;">Выбрано: 0</span>
+                <button onclick="confirmLaunch()" class="btn btn-primary" style="padding: 0.5rem 1.5rem;">
+                    ▶ Запустить
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -474,6 +501,100 @@ async function deleteAccount(username) {
     } catch (e) {
         showToast('Ошибка: ' + e.message, 'error');
     }
+}
+
+// ─── Все подсети VK Cloud ─────────────────────
+const ALL_SUBNETS = {{ all_subnets | tojson }};
+
+// ─── Модалка подсетей ────────────────────────
+let pendingServerId = null, pendingScriptId = null, pendingServerName = null, pendingScriptName = null;
+
+function selectScriptForSubnets(serverId, scriptId, serverName, scriptName) {
+    if (!currentProjectForScript) return;
+    pendingServerId = serverId;
+    pendingScriptId = scriptId;
+    pendingServerName = serverName;
+    pendingScriptName = scriptName;
+
+    document.getElementById('subnets-modal-script').textContent = serverName + '/' + scriptName;
+
+    // Рендерим чекбоксы подсетей
+    const list = document.getElementById('subnets-list');
+    list.innerHTML = ALL_SUBNETS.map(s => `
+        <label style="display:flex;align-items:center;gap:0.6rem;padding:0.45rem 0.8rem;border-bottom:1px solid rgba(51,65,85,0.4);cursor:pointer;font-size:0.85rem;"
+               onmouseenter="this.style.background='rgba(245,158,11,0.06)'" onmouseleave="this.style.background='transparent'">
+            <input type="checkbox" class="subnet-cb" value="${s.name}" checked>
+            <span style="color:#f59e0b;font-weight:600;min-width:90px;">${s.name}</span>
+            <span style="color:#94a3b8;">${s.cidr}</span>
+            ${s.end ? '<span style="color:#64748b;font-size:0.75rem;">→ ' + s.end + '</span>' : '<span style="color:#ef4444;font-size:0.75rem;">пул пуст</span>'}
+        </label>
+    `).join('');
+
+    updateSubnetsCount();
+    closeScriptModal();
+    document.getElementById('subnets-modal').classList.add('active');
+}
+
+function closeSubnetsModal() {
+    document.getElementById('subnets-modal').classList.remove('active');
+}
+
+function toggleAllSubnets(on) {
+    document.querySelectorAll('.subnet-cb').forEach(cb => cb.checked = on);
+    updateSubnetsCount();
+}
+
+function updateSubnetsCount() {
+    const count = document.querySelectorAll('.subnet-cb:checked').length;
+    document.getElementById('subnets-count').textContent = `Выбрано: ${count} из ${ALL_SUBNETS.length}`;
+}
+
+// Слушаем изменения чекбоксов
+document.addEventListener('change', e => { if (e.target.classList.contains('subnet-cb')) updateSubnetsCount(); });
+
+async function confirmLaunch() {
+    const selected = Array.from(document.querySelectorAll('.subnet-cb:checked')).map(cb => cb.value);
+    if (selected.length === 0) { showToast('Выберите хотя бы одну подсеть', 'error'); return; }
+
+    const projName = currentProjectForScript;
+    if (!confirm(`Назначить "${projName}" на ${pendingServerName}/${pendingScriptName} (${selected.length} подсетей) и запустить?`)) return;
+
+    closeSubnetsModal();
+    showToast(`Обновляю подсети и запускаю...`, 'info', 15000);
+
+    try {
+        // 1. Обновить подсети
+        const res0 = await fetch(`/api/scripts/${pendingServerId}/${pendingScriptId}/update-subnets`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+            body: JSON.stringify({subnets: selected}),
+            credentials: 'same-origin'
+        });
+        const data0 = await res0.json();
+        if (!data0.ok) { showToast('Ошибка подсетей: ' + (data0.error || data0.message), 'error'); return; }
+
+        // 2. Сменить проект
+        const formData = new FormData();
+        formData.append('project_name', projName);
+        const res1 = await fetch(`/api/scripts/${pendingServerId}/${pendingScriptId}/change-project`, {
+            method: 'POST', body: formData, credentials: 'same-origin',
+            headers: {'X-Requested-With': 'XMLHttpRequest'}
+        });
+        const data1 = await res1.json();
+        if (!data1.ok) { showToast('Ошибка проекта: ' + (data1.error || data1.message), 'error'); return; }
+
+        // 3. Запустить скрипт
+        const res2 = await fetch(`/servers/${pendingServerId}/scripts/${pendingScriptId}/restart`, {
+            method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}
+        });
+        const data2 = await res2.json();
+        if (data2.ok) {
+            showToast(`Запущен: ${pendingServerName}/${pendingScriptName} → ${projName} (${selected.length} подсетей)`, 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('Подсети и проект обновлены, но ошибка запуска: ' + (data2.error || data2.message), 'error');
+        }
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
 // ─── Модалка выбора скрипта ──────────────────────
@@ -726,6 +847,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAddModal();
         closeScriptModal();
+        closeSubnetsModal();
         closeTenantMenu();
     }
 });

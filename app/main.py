@@ -31,8 +31,9 @@ from .data import (
     get_server_by_id, get_script_by_id,
     update_status_cache, get_cached_status, get_cached_cloud,
 )
-from .ssh import get_script_status, control_script, get_floating_ips_via_cli, change_script_project, ssh_connect, ssh_exec
+from .ssh import get_script_status, control_script, get_floating_ips_via_cli, change_script_project, update_script_subnets, ssh_connect, ssh_exec
 from .openstack import get_project_floating_ips
+from .subnets import ALL_SUBNETS
 from .monitoring import (
     save_ssh_key, get_ssh_key_path, get_ssh_user,
     check_ssh_reachable, check_agent_version, deploy_agent, trigger_agent,
@@ -466,6 +467,48 @@ async def api_change_project(request: Request, server_id: int, script_id: int, p
     })
 
 
+@app.post("/api/scripts/{server_id}/{script_id}/update-subnets")
+async def api_update_subnets(request: Request, server_id: int, script_id: int):
+    """Обновить SUBNETS_JSON в .env скрипта."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    server = get_server_by_id(data, server_id)
+    if not server:
+        return JSONResponse({"ok": False, "error": "Server not found"}, status_code=404)
+
+    script = get_script_by_id(server, script_id)
+    if not script:
+        return JSONResponse({"ok": False, "error": "Script not found"}, status_code=404)
+
+    body = await request.json()
+    subnet_names = body.get("subnets", [])
+
+    if not subnet_names:
+        return JSONResponse({"ok": False, "error": "No subnets selected"}, status_code=400)
+
+    # Собираем выбранные подсети из ALL_SUBNETS
+    subnets_by_name = {s["name"]: s for s in ALL_SUBNETS}
+    selected = []
+    for name in subnet_names:
+        if name in subnets_by_name:
+            s = subnets_by_name[name]
+            entry = {"name": s["name"], "subnet_id": s["subnet_id"], "cidr": s["cidr"]}
+            if s.get("end"):
+                entry["end"] = s["end"]
+            selected.append(entry)
+
+    if not selected:
+        return JSONResponse({"ok": False, "error": "No valid subnets found"}, status_code=400)
+
+    import json
+    subnets_json_str = json.dumps(selected, ensure_ascii=False)
+
+    success, msg = update_script_subnets(server, script, subnets_json_str)
+    return JSONResponse({"ok": success, "message": msg})
+
+
 # ─── API ──────────────────────────────────────────────────────
 
 @app.post("/api/refresh")
@@ -815,6 +858,7 @@ async def projects_page(request: Request):
         "rentals": rentals,
         "pricing": pricing,
         "last_update": projects_last_update,
+        "all_subnets": ALL_SUBNETS,
     })
 
 

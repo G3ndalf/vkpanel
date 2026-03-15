@@ -346,3 +346,66 @@ def change_script_project(server: dict, script: dict, project: dict) -> tuple[bo
     finally:
         if client:
             client.close()
+
+
+def update_script_subnets(server: dict, script: dict, subnets_json_str: str) -> tuple[bool, str]:
+    """
+    Обновить SUBNETS_JSON в .env скрипта (без перезапуска).
+
+    Args:
+        server: данные сервера
+        script: данные скрипта
+        subnets_json_str: готовая JSON-строка для SUBNETS_JSON
+
+    Returns:
+        (success, message)
+    """
+    client = None
+    try:
+        client = ssh_connect(
+            server["host"],
+            server.get("port", 22),
+            server["user"],
+            server.get("password"),
+            server.get("key_path"),
+        )
+
+        env_file = f"{script['path']}/.env"
+
+        # Читаем текущий .env
+        code, current_env, err = ssh_exec(client, f"cat {env_file}")
+        if code != 0:
+            return False, f"Failed to read .env: {err}"
+
+        # Обновляем/добавляем SUBNETS_JSON
+        new_lines = []
+        found = False
+
+        for line in current_env.split("\n"):
+            line_stripped = line.strip()
+            if line_stripped.startswith("SUBNETS_JSON="):
+                new_lines.append(f"SUBNETS_JSON='{subnets_json_str}'")
+                found = True
+            else:
+                new_lines.append(line)
+
+        if not found:
+            new_lines.append(f"SUBNETS_JSON='{subnets_json_str}'")
+
+        new_env = "\n".join(new_lines)
+
+        # Записываем новый .env
+        escaped_env = new_env.replace("'", "'\\''")
+        code, out, err = ssh_exec(client, f"echo '{escaped_env}' > {env_file}")
+        if code != 0:
+            return False, f"Failed to write .env: {err}"
+
+        logger.info(f"Updated subnets for {server['name']}/{script['name']}")
+        return True, "Подсети обновлены"
+
+    except Exception as e:
+        logger.error(f"update_script_subnets failed: {e}")
+        return False, str(e)
+    finally:
+        if client:
+            client.close()
