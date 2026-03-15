@@ -209,7 +209,7 @@ def deploy_agent(ip: str, key_path: str, ssh_user: str, panel_url: str) -> dict:
         _ssh_exec(client, f"{sudo}mkdir -p /opt/traffic_agent /var/lib/traffic_agent")
 
         # Загружаем скрипт через base64
-        _ssh_exec(client, f"echo '{agent_b64}' | {sudo}tee /opt/traffic_agent/agent.py > /dev/null && {sudo}chmod +x /opt/traffic_agent/agent.py")
+        _ssh_exec(client, f"echo '{agent_b64}' | base64 -d | {sudo}tee /opt/traffic_agent/agent.py > /dev/null && {sudo}chmod +x /opt/traffic_agent/agent.py")
 
         # Создаём конфиг
         conf = f"SERVER_URL={panel_url}\nAPI_KEY={api_key}\nLOG_FILE=/var/log/traffic_agent.log"
