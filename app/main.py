@@ -35,7 +35,7 @@ from .ssh import get_script_status, control_script, get_floating_ips_via_cli, ch
 from .openstack import get_project_floating_ips
 from .monitoring import (
     save_ssh_key, get_ssh_key_path, get_ssh_user,
-    check_ssh_reachable, check_agent_version, deploy_agent, collect_traffic,
+    check_ssh_reachable, check_agent_version, deploy_agent,
     remove_agent, get_tenant_ips, CURRENT_AGENT_VERSION,
 )
 
@@ -2033,135 +2033,6 @@ async def api_monitoring_check_version_tenant(request: Request, tenant_name: str
     })
 
 
-@app.post("/api/monitoring/traffic/ip/{ip:path}")
-async def api_monitoring_traffic_ip(
-    request: Request, ip: str,
-    days: Optional[int] = Form(None),
-    date_from: Optional[str] = Form(None),
-    date_to: Optional[str] = Form(None),
-):
-    """Собрать трафик с одного сервера."""
-    if not get_current_user(request):
-        raise HTTPException(status_code=401)
-
-    # Определяем период
-    if date_from and date_to:
-        period_label = f"{date_from} — {date_to}"
-        effective_days = 0  # collect_traffic получит даты напрямую
-    else:
-        days = days or 1
-        period_label = f"за {days} дн."
-        date_from = None
-        date_to = None
-
-    data = load_data()
-    tenant_name = None
-    for t in data.get("tenants", []):
-        if ip in t.get("ips", []):
-            tenant_name = t["name"]
-            break
-
-    key_path = get_ssh_key_path(data, ip, tenant_name)
-    if not key_path:
-        return JSONResponse({"ok": False, "error": "SSH ключ не найден"}, status_code=400)
-
-    ssh_user = get_ssh_user(data, ip)
-    result = collect_traffic(ip, key_path, ssh_user, days or 0, date_from, date_to)
-
-    if result["ok"]:
-        # Сохраняем данные трафика
-        monitoring = data.setdefault("monitoring", {})
-        traffic_data = monitoring.setdefault("traffic_data", {})
-        traffic_data[ip] = {
-            "collected_at": now_msk().isoformat(),
-            "days": days,
-            "date_from": date_from,
-            "date_to": date_to,
-            "period": period_label,
-            "total_rx_gb": result["total_rx_gb"],
-            "total_tx_gb": result["total_tx_gb"],
-            "total_gb": result["total_gb"],
-            "interfaces": result["traffic"],
-        }
-        save_data(data)
-
-    return JSONResponse(result)
-
-
-@app.post("/api/monitoring/traffic/tenant/{tenant_name}")
-async def api_monitoring_traffic_tenant(
-    request: Request, tenant_name: str,
-    days: Optional[int] = Form(None),
-    date_from: Optional[str] = Form(None),
-    date_to: Optional[str] = Form(None),
-):
-    """Собрать трафик со всех серверов арендатора."""
-    if not get_current_user(request):
-        raise HTTPException(status_code=401)
-
-    # Определяем период
-    if date_from and date_to:
-        period_label = f"{date_from} — {date_to}"
-    else:
-        days = days or 1
-        period_label = f"за {days} дн."
-        date_from = None
-        date_to = None
-
-    data = load_data()
-    ips = get_tenant_ips(data, tenant_name)
-    if not ips:
-        return JSONResponse({"ok": False, "error": "У арендатора нет IP"}, status_code=400)
-
-    _days = days or 0
-    _df, _dt = date_from, date_to
-
-    def collect_one(ip: str) -> dict:
-        key_path = get_ssh_key_path(data, ip, tenant_name)
-        if not key_path:
-            return {"ip": ip, "ok": False, "error": "SSH ключ не найден", "total_gb": 0}
-        ssh_user = get_ssh_user(data, ip)
-        result = collect_traffic(ip, key_path, ssh_user, _days, _df, _dt)
-        return {"ip": ip, **result}
-
-    with ThreadPoolExecutor(max_workers=MAX_SSH_WORKERS) as executor:
-        results = list(executor.map(collect_one, ips))
-
-    # Сохраняем и суммируем
-    monitoring = data.setdefault("monitoring", {})
-    traffic_data = monitoring.setdefault("traffic_data", {})
-    total_gb = 0
-
-    for r in results:
-        if r.get("ok"):
-            traffic_data[r["ip"]] = {
-                "collected_at": now_msk().isoformat(),
-                "days": days,
-                "date_from": date_from,
-                "date_to": date_to,
-                "period": period_label,
-                "total_rx_gb": r.get("total_rx_gb", 0),
-                "total_tx_gb": r.get("total_tx_gb", 0),
-                "total_gb": r.get("total_gb", 0),
-                "interfaces": r.get("traffic", {}),
-            }
-            total_gb += r.get("total_gb", 0)
-    save_data(data)
-
-    ok_count = sum(1 for r in results if r.get("ok"))
-    # Собираем предупреждения о снапшотах
-    warnings = [r["warning"] for r in results if r.get("warning")]
-    resp = {
-        "ok": ok_count > 0,
-        "message": f"Собрано с {ok_count}/{len(results)} серверов. Общий трафик: {round(total_gb, 2)} ГБ",
-        "total_gb": round(total_gb, 2),
-        "results": results,
-    }
-    if warnings:
-        resp["warning"] = f"Снапшоты отсутствуют на {len(warnings)} из {len(results)} серверов. Обновите агент."
-    return JSONResponse(resp)
-
-
 @app.post("/api/monitoring/remove-all-agents")
 async def api_monitoring_remove_all_agents(request: Request):
     """Удалить агенты мониторинга со ВСЕХ серверов."""
@@ -2223,7 +2094,12 @@ async def api_monitoring_remove_all_agents(request: Request):
 
 @app.post("/api/v1/report")
 async def api_v1_report(request: Request):
-    """Приём отчётов от агентов мониторинга (ночной cron)."""
+    """
+    Приём отчётов от агентов v2.
+    Агент шлёт {"tx_bytes": int} — сырое значение TX из /proc/net/dev.
+    Панель считает дельту и накапливает total_tx.
+    Детект ребута: если новое значение < предыдущего.
+    """
     api_key = request.headers.get("X-API-Key", "")
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API key")
@@ -2241,35 +2117,59 @@ async def api_v1_report(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    interfaces = body.get("interfaces", {})
-    if not interfaces:
-        raise HTTPException(status_code=400, detail="No interface data")
+    tx_bytes = body.get("tx_bytes")
+    if tx_bytes is None:
+        raise HTTPException(status_code=400, detail="Missing tx_bytes")
 
-    # Сохраняем данные трафика
+    # Логика накопления трафика
     traffic_data = monitoring.setdefault("traffic_data", {})
-    total_rx = sum(v.get("rx_bytes", 0) for v in interfaces.values())
-    total_tx = sum(v.get("tx_bytes", 0) for v in interfaces.values())
+    ip_data = traffic_data.setdefault(ip, {
+        "total_tx_bytes": 0,
+        "last_raw_tx": 0,
+        "reports": [],
+    })
 
-    traffic_data[ip] = {
-        "collected_at": now_msk().isoformat(),
-        "total_rx_gb": round(total_rx / (1000**3), 2),
-        "total_tx_gb": round(total_tx / (1000**3), 2),
-        "total_gb": round((total_rx + total_tx) / (1000**3), 2),
-        "interfaces": interfaces,
-        "source": "agent",
-    }
+    last_raw_tx = ip_data.get("last_raw_tx", 0)
+    total_tx_bytes = ip_data.get("total_tx_bytes", 0)
 
-    # Обновляем статус
+    if tx_bytes >= last_raw_tx:
+        # Нормальный случай: трафик вырос
+        delta = tx_bytes - last_raw_tx
+    else:
+        # Ребут: счётчик сбросился, весь новый трафик — дельта
+        delta = tx_bytes
+        logger.info(f"Reboot detected for {ip}: raw {tx_bytes} < prev {last_raw_tx}")
+
+    total_tx_bytes += delta
+
+    # Обновляем данные
+    ip_data["total_tx_bytes"] = total_tx_bytes
+    ip_data["total_tx_gb"] = round(total_tx_bytes / (1000**3), 3)
+    ip_data["last_raw_tx"] = tx_bytes
+    ip_data["last_report"] = now_msk().isoformat()
+    ip_data["last_delta_bytes"] = delta
+
+    # Храним историю последних 100 отчётов
+    reports = ip_data.setdefault("reports", [])
+    reports.append({
+        "at": now_msk().isoformat(),
+        "raw_tx": tx_bytes,
+        "delta": delta,
+        "total": total_tx_bytes,
+    })
+    if len(reports) > 100:
+        ip_data["reports"] = reports[-100:]
+
+    # Обновляем статус агента
     ip_status = monitoring.setdefault("ip_status", {})
     ip_status.setdefault(ip, {})["last_report"] = now_msk().isoformat()
     ip_status[ip]["is_reachable"] = True
-    # Сохраняем версию агента
     agent_version = body.get("version")
     if agent_version:
         ip_status[ip]["agent_version"] = agent_version
 
     save_data(data)
-    logger.info(f"Traffic report from {ip}: {len(interfaces)} interfaces")
+    logger.info(f"Report from {ip}: raw_tx={tx_bytes}, delta={delta}, total={total_tx_bytes} ({ip_data['total_tx_gb']} GB)")
 
     return {"status": "ok"}
 

@@ -48,7 +48,7 @@
             <button class="btn btn-primary btn-sm" onclick="deployTenant('{{ tenant.name }}')">🚀 Развернуть мониторинг</button>
             <button class="btn btn-secondary btn-sm" onclick="checkTenant('{{ tenant.name }}')">🔍 Проверить</button>
             <button class="btn btn-secondary btn-sm" onclick="checkVersionsTenant('{{ tenant.name }}')">🔄 Проверить версии</button>
-            <button class="btn btn-secondary btn-sm" onclick="openTrafficModal('{{ tenant.name }}', null)">📈 Сбор трафика</button>
+            <!-- Трафик приходит автоматически каждые 12ч -->
         </div>
     </div>
 
@@ -122,7 +122,7 @@
                         <div class="actions" style="flex-wrap: wrap;">
                             <button class="btn btn-primary btn-sm" onclick="deployIp('{{ ip.ip }}')" title="Развернуть агент">🚀</button>
                             <button class="btn btn-secondary btn-sm" onclick="checkIp('{{ ip.ip }}')" title="Проверить доступность">🔍</button>
-                            <button class="btn btn-secondary btn-sm" onclick="openTrafficModal(null, '{{ ip.ip }}')" title="Сбор трафика">📈</button>
+                            <!-- Трафик автоматически -->
                         </div>
                     </td>
                 </tr>
@@ -192,47 +192,7 @@
 </div>
 {% endif %}
 
-<!-- Модалка сбора трафика -->
-<div id="traffic-modal" class="modal" onclick="if(event.target.id==='traffic-modal') closeTrafficModal();">
-    <div class="modal-content" style="max-width: 400px;">
-        <div class="modal-header">
-            <h3>📈 Сбор трафика</h3>
-            <button class="modal-close" onclick="closeTrafficModal()">✕</button>
-        </div>
-        <div class="modal-body">
-            <p style="color: #94a3b8; margin-bottom: 1rem;" id="traffic-target-label"></p>
-            <form onsubmit="submitTraffic(event)">
-                <!-- Переключатель режима -->
-                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                    <button type="button" class="btn btn-primary btn-sm traffic-mode-btn active" id="mode-days-btn" onclick="setTrafficMode('days')">Последние N дней</button>
-                    <button type="button" class="btn btn-secondary btn-sm traffic-mode-btn" id="mode-range-btn" onclick="setTrafficMode('range')">Период</button>
-                </div>
-                <!-- Режим: дни -->
-                <div id="traffic-mode-days">
-                    <div class="form-group">
-                        <label>Количество дней</label>
-                        <input type="number" id="traffic-days" value="5" min="1" max="365">
-                    </div>
-                </div>
-                <!-- Режим: период -->
-                <div id="traffic-mode-range" style="display: none;">
-                    <div class="form-group">
-                        <label>С</label>
-                        <input type="date" id="traffic-date-from" style="color-scheme: dark;">
-                    </div>
-                    <div class="form-group">
-                        <label>По</label>
-                        <input type="date" id="traffic-date-to" style="color-scheme: dark;">
-                    </div>
-                </div>
-                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-                    <button type="button" class="btn btn-secondary" onclick="closeTrafficModal()">Отмена</button>
-                    <button type="submit" class="btn btn-primary" id="traffic-submit-btn">Собрать</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
+<!-- Трафик приходит автоматически от агентов каждые 12ч -->
 
 <!-- Модалка SSH user -->
 <div id="ssh-user-modal" class="modal" onclick="if(event.target.id==='ssh-user-modal') closeSshUserModal();">
@@ -458,91 +418,6 @@ async function checkVersionsTenant(name) {
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
-// ─── Сбор трафика ────────────────────────────
-let trafficTenant = null;
-let trafficIp = null;
-let trafficMode = 'days';
-
-function setTrafficMode(mode) {
-    trafficMode = mode;
-    document.getElementById('traffic-mode-days').style.display = mode === 'days' ? '' : 'none';
-    document.getElementById('traffic-mode-range').style.display = mode === 'range' ? '' : 'none';
-    document.getElementById('mode-days-btn').className = `btn btn-sm traffic-mode-btn ${mode === 'days' ? 'btn-primary active' : 'btn-secondary'}`;
-    document.getElementById('mode-range-btn').className = `btn btn-sm traffic-mode-btn ${mode === 'range' ? 'btn-primary active' : 'btn-secondary'}`;
-}
-
-function openTrafficModal(tenant, ip) {
-    trafficTenant = tenant;
-    trafficIp = ip;
-    const label = document.getElementById('traffic-target-label');
-    if (tenant) label.textContent = `Арендатор: ${tenant} (все серверы)`;
-    else label.textContent = `Сервер: ${ip}`;
-    document.getElementById('traffic-days').value = 5;
-    // Дефолтные даты: последние 5 дней
-    const today = new Date();
-    const fiveDaysAgo = new Date(today);
-    fiveDaysAgo.setDate(today.getDate() - 5);
-    document.getElementById('traffic-date-to').value = today.toISOString().slice(0, 10);
-    document.getElementById('traffic-date-from').value = fiveDaysAgo.toISOString().slice(0, 10);
-    setTrafficMode('days');
-    document.getElementById('traffic-modal').classList.add('active');
-}
-
-function closeTrafficModal() {
-    document.getElementById('traffic-modal').classList.remove('active');
-    trafficTenant = null;
-    trafficIp = null;
-}
-
-async function submitTraffic(e) {
-    e.preventDefault();
-    const btn = document.getElementById('traffic-submit-btn');
-    btn.disabled = true; btn.classList.add('btn-loading');
-
-    let url;
-    if (trafficTenant) url = `/api/monitoring/traffic/tenant/${encodeURIComponent(trafficTenant)}`;
-    else url = `/api/monitoring/traffic/ip/${trafficIp}`;
-
-    const formData = new FormData();
-    if (trafficMode === 'days') {
-        formData.append('days', document.getElementById('traffic-days').value);
-    } else {
-        const dateFrom = document.getElementById('traffic-date-from').value;
-        const dateTo = document.getElementById('traffic-date-to').value;
-        if (!dateFrom || !dateTo) { showToast('Выберите обе даты', 'error'); btn.disabled = false; btn.classList.remove('btn-loading'); return; }
-        formData.append('date_from', dateFrom);
-        formData.append('date_to', dateTo);
-    }
-
-    try {
-        showToast('Собираю трафик...', 'info', 30000);
-        const res = await fetch(url, {method: 'POST', body: formData, credentials: 'same-origin'});
-        const data = await res.json();
-        closeTrafficModal();
-
-        if (trafficIp && data.ok) {
-            const el = document.getElementById('traffic-' + trafficIp.replace(/\./g, '-'));
-            if (el) {
-                const txTb = (data.total_tx_gb / 1000).toFixed(3);
-                el.innerHTML = `<span style="color: #3b82f6; font-size: 0.85rem; font-weight: 600;">${txTb} ТБ</span>`;
-            }
-        }
-
-        if (data.ok || data.message) {
-            // Показываем предупреждение если снапшотов нет
-            if (data.warning) {
-                showToast('⚠️ ' + data.warning, 'error', 8000);
-            }
-            showToast(data.message || `Трафик: ${data.total_gb} ГБ`, 'success');
-            if (trafficTenant) setTimeout(() => location.reload(), 1500);
-        } else {
-            showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error');
-        }
-    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
-
-    btn.disabled = false; btn.classList.remove('btn-loading');
-}
-
 // ─── Свернуть/развернуть арендатора ──────────
 function toggleTenant(name) {
     const body = document.getElementById('body-' + name);
@@ -612,7 +487,7 @@ async function removeAllAgents() {
 
 // ─── Клавиатура ──────────────────────────────
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeTrafficModal(); closeSshUserModal(); }
+    if (e.key === 'Escape') { closeSshUserModal(); }
 });
 </script>
 {% endblock %}
