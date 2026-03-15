@@ -5,9 +5,13 @@
 {% block content %}
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.75rem;">
     <h1>📊 Мониторинг трафика</h1>
-    {% if deployed_count > 0 %}
-    <button class="btn btn-sm" style="background: #ef4444; color: white;" onclick="removeAllAgents()">🗑️ Удалить все агенты</button>
-    {% endif %}
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        {% if deployed_count > 0 %}
+        <button class="btn btn-sm" style="background: #ef4444; color: white;" onclick="removeAllAgents()">🗑️ Удалить все агенты</button>
+        <button class="btn btn-sm" style="background: #f59e0b; color: #0f172a;" onclick="resetTraffic()">🔄 Сбросить трафик</button>
+        {% endif %}
+        <button class="btn btn-secondary btn-sm" onclick="showReports()">📋 История отчётов</button>
+    </div>
 </div>
 
 <div class="stats-grid">
@@ -192,7 +196,18 @@
 </div>
 {% endif %}
 
-<!-- Трафик приходит автоматически от агентов каждые 12ч -->
+<!-- Модалка истории отчётов -->
+<div id="reports-modal" class="modal" onclick="if(event.target.id==='reports-modal') closeReportsModal();">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3>📋 История отчётов</h3>
+            <button class="modal-close" onclick="closeReportsModal()">✕</button>
+        </div>
+        <div class="modal-body" id="reports-body">
+            <p style="color: #94a3b8;">Загрузка...</p>
+        </div>
+    </div>
+</div>
 
 <!-- Модалка SSH user -->
 <div id="ssh-user-modal" class="modal" onclick="if(event.target.id==='ssh-user-modal') closeSshUserModal();">
@@ -493,6 +508,56 @@ async function collectTenant(name) {
     } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
 }
 
+// ─── Сброс трафика ───────────────────────────
+async function resetTraffic() {
+    if (!confirm('Сбросить весь накопленный трафик? Счётчики обнулятся.')) return;
+    try {
+        const res = await fetch('/api/monitoring/reset-traffic', {method: 'POST', credentials: 'same-origin'});
+        const data = await res.json();
+        showToast(data.message, data.ok ? 'success' : 'error');
+        if (data.ok) setTimeout(() => location.reload(), 800);
+    } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+}
+
+// ─── История отчётов ─────────────────────────
+function closeReportsModal() {
+    document.getElementById('reports-modal').classList.remove('active');
+}
+
+function fmtBytes(b) {
+    if (b >= 1e12) return (b / 1e12).toFixed(2) + ' ТБ';
+    if (b >= 1e9) return (b / 1e9).toFixed(2) + ' ГБ';
+    if (b >= 1e6) return (b / 1e6).toFixed(1) + ' МБ';
+    return (b / 1e3).toFixed(0) + ' КБ';
+}
+
+async function showReports() {
+    document.getElementById('reports-modal').classList.add('active');
+    const body = document.getElementById('reports-body');
+    body.innerHTML = '<p style="color: #94a3b8;">Загрузка...</p>';
+    try {
+        const res = await fetch('/api/monitoring/reports', {credentials: 'same-origin'});
+        const data = await res.json();
+        if (!data.reports || data.reports.length === 0) {
+            body.innerHTML = '<p style="color: #64748b;">Нет отчётов</p>';
+            return;
+        }
+        let html = '<table style="width:100%;"><thead><tr><th>Время</th><th>IP</th><th>Дельта</th><th>Raw TX</th><th>Итого</th></tr></thead><tbody>';
+        data.reports.forEach(r => {
+            const time = r.at.slice(0, 16).replace('T', ' ');
+            html += `<tr>
+                <td style="white-space:nowrap;font-size:0.8rem;">${time}</td>
+                <td><code style="font-size:0.8rem;">${r.ip}</code></td>
+                <td style="color:#10b981;font-weight:600;">+${fmtBytes(r.delta)}</td>
+                <td style="color:#94a3b8;font-size:0.8rem;">${fmtBytes(r.raw_tx)}</td>
+                <td style="color:#3b82f6;font-weight:600;">${fmtBytes(r.total)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        body.innerHTML = html;
+    } catch (e) { body.innerHTML = '<p style="color: #ef4444;">Ошибка: ' + e.message + '</p>'; }
+}
+
 // ─── Удаление всех агентов ────────────────────
 async function removeAllAgents() {
     if (!confirm('Удалить агенты мониторинга со ВСЕХ серверов? Это действие необратимо.')) return;
@@ -508,7 +573,7 @@ async function removeAllAgents() {
 
 // ─── Клавиатура ──────────────────────────────
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeSshUserModal(); }
+    if (e.key === 'Escape') { closeSshUserModal(); closeReportsModal(); }
 });
 </script>
 {% endblock %}

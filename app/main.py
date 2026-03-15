@@ -2084,6 +2084,58 @@ async def api_monitoring_collect_tenant(request: Request, tenant_name: str):
     })
 
 
+@app.post("/api/monitoring/reset-traffic")
+async def api_monitoring_reset_traffic(request: Request):
+    """Сбросить накопленный трафик для всех IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    monitoring = data.setdefault("monitoring", {})
+    traffic_data = monitoring.get("traffic_data", {})
+
+    if not traffic_data:
+        return JSONResponse({"ok": True, "message": "Нет данных трафика"})
+
+    for ip in traffic_data:
+        traffic_data[ip]["total_tx_bytes"] = 0
+        traffic_data[ip]["total_tx_gb"] = 0
+        traffic_data[ip]["last_raw_tx"] = 0
+        traffic_data[ip]["last_delta_bytes"] = 0
+        traffic_data[ip]["reports"] = []
+
+    save_data(data)
+    return JSONResponse({"ok": True, "message": f"Трафик сброшен для {len(traffic_data)} IP"})
+
+
+@app.get("/api/monitoring/reports")
+async def api_monitoring_reports(request: Request):
+    """Получить историю отчётов всех IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+
+    data = load_data()
+    monitoring = data.get("monitoring", {})
+    traffic_data = monitoring.get("traffic_data", {})
+
+    # Собираем все отчёты со всех IP, добавляем IP к каждому
+    all_reports = []
+    for ip, td in traffic_data.items():
+        for r in td.get("reports", []):
+            all_reports.append({
+                "ip": ip,
+                "at": r["at"],
+                "raw_tx": r["raw_tx"],
+                "delta": r["delta"],
+                "total": r["total"],
+            })
+
+    # Сортируем по времени (новые сверху)
+    all_reports.sort(key=lambda x: x["at"], reverse=True)
+
+    return JSONResponse({"ok": True, "reports": all_reports[:200]})
+
+
 @app.post("/api/monitoring/remove-all-agents")
 async def api_monitoring_remove_all_agents(request: Request):
     """Удалить агенты мониторинга со ВСЕХ серверов."""
