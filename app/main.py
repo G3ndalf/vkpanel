@@ -2325,6 +2325,82 @@ async def api_v1_report(request: Request):
     return {"status": "ok"}
 
 
+# ─── Найденные IP ─────────────────────────────────────────────
+
+@app.post("/api/v1/found-ip")
+async def api_v1_found_ip(request: Request):
+    """
+    Приём найденных IP от скриптов ловли.
+    Скрипт шлёт: {service, subnet, ip, fip_id, project, account}
+    Не требует авторизации (скрипты на серверах), но нужен X-API-Key.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    # Обязательные поля
+    ip = body.get("ip")
+    if not ip:
+        raise HTTPException(status_code=400, detail="Missing ip")
+
+    data = load_data()
+    found_ips = data.setdefault("found_ips", [])
+
+    entry = {
+        "ip": ip,
+        "fip_id": body.get("fip_id", ""),
+        "subnet": body.get("subnet", ""),
+        "service": body.get("service", ""),
+        "server": body.get("server", ""),
+        "project": body.get("project", ""),
+        "account": body.get("account", ""),
+        "found_at": now_msk().isoformat(),
+    }
+
+    found_ips.append(entry)
+
+    # Лимит: храним последние 1000
+    if len(found_ips) > 1000:
+        data["found_ips"] = found_ips[-1000:]
+
+    save_data(data)
+    logger.info(f"Found IP: {ip} subnet={entry['subnet']} service={entry['service']}")
+
+    return {"status": "ok"}
+
+
+@app.get("/found-ips", response_class=HTMLResponse)
+async def found_ips_page(request: Request):
+    """Страница найденных IP."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+
+    data = load_data()
+    found_ips = data.get("found_ips", [])
+    # Новые сверху
+    found_ips_sorted = list(reversed(found_ips))
+
+    return templates.TemplateResponse("found_ips.html", {
+        "request": request,
+        "user": user,
+        "found_ips": found_ips_sorted,
+        "total": len(found_ips),
+    })
+
+
+@app.post("/api/found-ips/clear")
+async def api_found_ips_clear(request: Request):
+    """Очистить все найденные IP."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+    data = load_data()
+    data["found_ips"] = []
+    save_data(data)
+    return JSONResponse({"ok": True, "message": "Очищено"})
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
