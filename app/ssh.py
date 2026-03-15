@@ -377,20 +377,31 @@ def update_script_subnets(server: dict, script: dict, subnets_json_str: str) -> 
         if code != 0:
             return False, f"Failed to read .env: {err}"
 
-        # Обновляем/добавляем SUBNETS_JSON
+        # Считаем CYCLE: 30 сек на подсеть
+        import json as _json
+        num_subnets = len(_json.loads(subnets_json_str))
+        cycle_seconds = num_subnets * 30
+
+        # Обновляем/добавляем SUBNETS_JSON и CYCLE
         new_lines = []
-        found = False
+        found_subnets = False
+        found_cycle = False
 
         for line in current_env.split("\n"):
             line_stripped = line.strip()
             if line_stripped.startswith("SUBNETS_JSON="):
                 new_lines.append(f"SUBNETS_JSON='{subnets_json_str}'")
-                found = True
+                found_subnets = True
+            elif line_stripped.startswith("CYCLE="):
+                new_lines.append(f"CYCLE={cycle_seconds}")
+                found_cycle = True
             else:
                 new_lines.append(line)
 
-        if not found:
+        if not found_subnets:
             new_lines.append(f"SUBNETS_JSON='{subnets_json_str}'")
+        if not found_cycle:
+            new_lines.append(f"CYCLE={cycle_seconds}")
 
         new_env = "\n".join(new_lines)
 
