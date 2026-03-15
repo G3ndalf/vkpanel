@@ -507,7 +507,7 @@ async function deleteAccount(username) {
 const ALL_SUBNETS = {{ all_subnets | tojson }};
 
 // ─── Модалка подсетей ────────────────────────
-let pendingServerId = null, pendingScriptId = null, pendingServerName = null, pendingScriptName = null;
+let pendingServerId = null, pendingScriptId = null, pendingServerName = null, pendingScriptName = null, pendingProjectName = null;
 
 function selectScriptForSubnets(serverId, scriptId, serverName, scriptName) {
     if (!currentProjectForScript) return;
@@ -515,6 +515,7 @@ function selectScriptForSubnets(serverId, scriptId, serverName, scriptName) {
     pendingScriptId = scriptId;
     pendingServerName = serverName;
     pendingScriptName = scriptName;
+    pendingProjectName = currentProjectForScript;  // Сохраняем до закрытия модалки
 
     document.getElementById('subnets-modal-script').textContent = serverName + '/' + scriptName;
 
@@ -556,7 +557,8 @@ async function confirmLaunch() {
     const selected = Array.from(document.querySelectorAll('.subnet-cb:checked')).map(cb => cb.value);
     if (selected.length === 0) { showToast('Выберите хотя бы одну подсеть', 'error'); return; }
 
-    const projName = currentProjectForScript;
+    const projName = pendingProjectName;
+    if (!projName) { showToast('Проект не выбран', 'error'); return; }
     if (!confirm(`Назначить "${projName}" на ${pendingServerName}/${pendingScriptName} (${selected.length} подсетей) и запустить?`)) return;
 
     closeSubnetsModal();
